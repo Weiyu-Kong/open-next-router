@@ -275,6 +275,7 @@ func (s *Server) Handler() http.Handler {
 	userAPI.HandleFunc("/api/user/limits", s.handleUserLimits)
 	userAPI.HandleFunc("/api/user/usage", s.handleUserUsage)
 	userAPI.HandleFunc("/api/user/requests", s.handleUserRequests)
+	userAPI.HandleFunc("/api/user/bills", s.handleUserBills)
 	mux.Handle("/api/user/", userAPI)
 	mux.Handle("/api/", s.authMiddleware(api))
 	return mux
@@ -443,6 +444,39 @@ func (s *Server) handleUserRequests(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "requests": rows})
+}
+
+func (s *Server) handleUserBills(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	record, ok := s.userSession(r)
+	if !ok {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
+		return
+	}
+	now := time.Now().Unix()
+	start := parseUnixQuery(r.URL.Query().Get("start"), now-24*60*60)
+	end := parseUnixQuery(r.URL.Query().Get("end"), now)
+	if start < now-31*24*60*60 || end <= start || end-start > 31*24*60*60 {
+		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bill range must be within 31 days"})
+		return
+	}
+	bills, err := s.service.QueryAccessKeyBills(r.Context(), record, start, end, 100)
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "billing history unavailable"})
+		return
+	}
+	rows := make([]map[string]any, 0, len(bills.Rows))
+	for _, row := range bills.Rows {
+		rows = append(rows, map[string]any{"model": row.Dimensions["model"], "request_count": row.RequestCount, "amount": row.Amount, "metrics": row.Metrics})
+	}
+	currency := "USD"
+	if cfg := s.service.Config(); cfg != nil && strings.TrimSpace(cfg.Meterry.BalanceEnforcement.Currency) != "" {
+		currency = strings.TrimSpace(cfg.Meterry.BalanceEnforcement.Currency)
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "currency": currency, "bills": rows, "has_more": bills.HasMore})
 }
 
 func parseUnixQuery(value string, fallback int64) int64 {
