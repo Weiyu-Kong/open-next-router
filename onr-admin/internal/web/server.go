@@ -1185,6 +1185,18 @@ func (s *Server) handleAdminAccessKey(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "balance": balance, "limits": limits})
 		return
 	}
+	if len(parts) == 2 && parts[1] == "provision" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		if err := s.service.ProvisionAccessKey(r.Context(), name); err != nil {
+			writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: err.Error()})
+			return
+		}
+		writeJSONAny(w, http.StatusOK, adminAccessKeyResponse{OK: true})
+		return
+	}
 	if len(parts) == 2 && (parts[1] == "rotate" || parts[1] == "revoke") {
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w, http.MethodPost)

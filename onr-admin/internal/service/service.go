@@ -142,7 +142,7 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 	rec := controlplane.AccessKeyRecord{
 		Name:             in.Name,
 		SecretHash:       s.cp.HashAccessKey(secret),
-		Status:           "active",
+		Status:           "pending",
 		SubjectType:      in.SubjectType,
 		SubjectID:        in.SubjectID,
 		AccountID:        accountID,
@@ -153,19 +153,56 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		Metadata:         in.Metadata,
 		Provisioning:     "pending",
 	}
-	if s.meterry != nil {
-		accountID, err := s.provisionMeterry(ctx, rec)
-		if err != nil {
-			return "", err
-		}
-		rec.MeterryAccountID = accountID
-		rec.AccountID = accountID
-		rec.Provisioning = "ready"
-	}
 	if e = s.cp.CreateAccessKey(ctx, rec); e != nil {
 		return "", e
 	}
+	if !s.cfg.Meterry.Enabled {
+		rec.Status = "active"
+		rec.Provisioning = "disabled"
+		if e = s.cp.PutAccessKey(ctx, rec); e != nil {
+			return "", e
+		}
+		return secret, nil
+	}
+	if s.meterry == nil {
+		return "", fmt.Errorf("Meterry provisioning is not configured; retry the pending access key after configuration")
+	}
+	if e = s.finishAccessKeyProvisioning(ctx, rec); e != nil {
+		return "", e
+	}
 	return secret, nil
+}
+
+// ProvisionAccessKey retries a pending Meterry setup without issuing a new
+// secret. It is safe to call repeatedly because account, wallet, and credit
+// operations use deterministic identities and idempotency keys.
+func (s *Service) ProvisionAccessKey(ctx context.Context, name string) error {
+	if s.cp == nil {
+		return fmt.Errorf("redis access-key management is disabled")
+	}
+	rec, err := s.cp.GetAccessKeyRecord(ctx, strings.TrimSpace(name))
+	if err != nil || rec == nil {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("access key not found")
+	}
+	if rec.Status != "pending" {
+		return fmt.Errorf("access key provisioning status is %q", rec.Provisioning)
+	}
+	return s.finishAccessKeyProvisioning(ctx, *rec)
+}
+
+func (s *Service) finishAccessKeyProvisioning(ctx context.Context, rec controlplane.AccessKeyRecord) error {
+	accountID, err := s.provisionMeterry(ctx, rec)
+	if err != nil {
+		return err
+	}
+	rec.MeterryAccountID = accountID
+	rec.AccountID = accountID
+	rec.Provisioning = "ready"
+	rec.Status = "active"
+	return s.cp.PutAccessKey(ctx, rec)
 }
 
 func (s *Service) provisionMeterry(ctx context.Context, rec controlplane.AccessKeyRecord) (string, error) {

@@ -347,7 +347,8 @@ identifier as the authorization source.
   - Added administrator credit/debit adjustment endpoint at `/api/admin/access-keys/{name}/balance`; positive decimal amounts and caller-provided idempotency keys are required.
   - Added administrator meter snapshot endpoint at `/api/admin/access-keys/{name}/meter` for the Meterry balance and limits.
   - Added an atomic Redis account index that rejects a second active Access Key for the same account and removes the index on revoke; rotation keeps the account mapping.
-  - Remaining in this step: failure recovery for partially completed provisioning.
+  - Added pending provisioning state and administrator retry endpoint at `/api/admin/access-keys/{name}/provision`; retries reuse deterministic Meterry identities and initial-credit idempotency keys.
+  - Remaining in this step: production failure-injection tests for partially completed provisioning.
   - Define the deterministic Access Key to Meterry account/subject mapping.
   - Create or bind the Meterry account and subject during Access Key provisioning.
   - Create or credit the initial wallet amount with an idempotency key derived from the Access Key/account creation operation.
