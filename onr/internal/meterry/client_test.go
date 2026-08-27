@@ -11,7 +11,16 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/r9s-ai/open-next-router/pkg/usageadapter"
 )
+
+type testUsageAdapter struct{}
+
+func (testUsageAdapter) Provider() string { return "openai" }
+func (testUsageAdapter) Fetch(context.Context, usageadapter.Query) ([]usageadapter.Record, error) {
+	return nil, nil
+}
 
 func TestClientSendsQueuedEvent(t *testing.T) {
 	received := make(chan Event, 1)
@@ -66,6 +75,17 @@ func TestQueryScopeValidation(t *testing.T) {
 	}
 	if (QueryScope{SubjectType: "api_key"}).valid() {
 		t.Fatal("partial subject query scope must be invalid")
+	}
+}
+
+func TestReconcileProviderUsageValidatesBeforeAdapterWhenDisabled(t *testing.T) {
+	c, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count, err := c.ReconcileProviderUsage(context.Background(), testUsageAdapter{}, usageadapter.Query{}, "api_key", "key-1", "key-1", "account-1", "")
+	if err != nil || count != 0 {
+		t.Fatalf("reconcile disabled=(%d,%v), want 0,nil", count, err)
 	}
 }
 

@@ -362,6 +362,8 @@ identifier as the authorization source.
   - Query methods require an account or a complete subject scope and derive the project from server configuration.
   - The adapter does not accept browser-supplied project or credential fields.
   - Provider-specific usage adapters and reconciliation remain pending below.
+  - Added the explicit `pkg/usageadapter.Adapter` contract and bounded query/record validation.
+  - Added Meterry reconciliation enqueueing with provider-scoped idempotency keys (`onr:provider-usage:<provider>:<request_id>`).
   - Add balance and limit snapshot methods.
   - Add usage analytics and bill query methods.
   - Add usage event detail methods for the user's own account.

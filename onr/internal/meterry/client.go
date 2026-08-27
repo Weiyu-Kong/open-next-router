@@ -13,6 +13,7 @@ import (
 	sdk "github.com/meterry-com/meterry-go"
 	"github.com/meterry-com/meterry-go/pkg/types"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
+	"github.com/r9s-ai/open-next-router/pkg/usageadapter"
 )
 
 type Config struct {
@@ -436,6 +437,48 @@ func (c *Client) Enqueue(event Event) error {
 		return nil
 	}
 	return c.outbox.append(event)
+}
+
+// ReconcileProviderUsage imports records returned by an explicit provider
+// usage adapter. Each record is converted to a stable, provider-scoped event
+// so repeated polling cannot double-charge the same request.
+func (c *Client) ReconcileProviderUsage(ctx context.Context, adapter usageadapter.Adapter, query usageadapter.Query, subjectType, subjectID, accessKeyID, accountID, routePolicyID string) (int, error) {
+	if !c.Enabled() {
+		return 0, nil
+	}
+	if adapter == nil {
+		return 0, errors.New("provider usage adapter is nil")
+	}
+	if err := query.Validate(); err != nil {
+		return 0, err
+	}
+	records, err := adapter.Fetch(ctx, query)
+	if err != nil {
+		return 0, err
+	}
+	provider := strings.TrimSpace(adapter.Provider())
+	if provider == "" {
+		return 0, errors.New("provider usage adapter has no provider")
+	}
+	count := 0
+	for _, record := range records {
+		if err := record.Validate(); err != nil {
+			return count, err
+		}
+		if !strings.EqualFold(provider, record.Provider) {
+			return count, fmt.Errorf("provider usage record provider %q does not match adapter %q", record.Provider, provider)
+		}
+		event := NewEvent(record.RequestID, provider, record.API, record.Model, record.Stream, record.Status, "provider_usage_api", record.Usage, subjectType, subjectID, "", nil, accessKeyID, accountID, routePolicyID)
+		event.ExternalEventID = "provider:" + strings.ToLower(provider) + ":" + strings.TrimSpace(record.RequestID)
+		event.IdempotencyKey = "onr:provider-usage:" + strings.ToLower(provider) + ":" + strings.TrimSpace(record.RequestID)
+		event.OccurredAt = record.OccurredAt.Unix()
+		event.Metadata = record.Metadata
+		if err := c.Enqueue(event); err != nil {
+			return count, err
+		}
+		count++
+	}
+	return count, nil
 }
 
 func (c *Client) Close() error {
