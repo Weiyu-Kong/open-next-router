@@ -887,6 +887,30 @@ func (s *Server) handleAdminAccessKey(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "state": st})
 		return
 	}
+	if len(parts) == 2 && parts[1] == "balance" {
+		if r.Method != http.MethodPost {
+			writeMethodNotAllowed(w, http.MethodPost)
+			return
+		}
+		var in struct {
+			Operation      string `json:"operation"`
+			Amount         string `json:"amount"`
+			Currency       string `json:"currency"`
+			Reason         string `json:"reason"`
+			IdempotencyKey string `json:"idempotency_key"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil {
+			writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: "invalid JSON"})
+			return
+		}
+		entry, err := s.service.AdjustAccessKeyBalance(r.Context(), name, in.Operation, adminservice.WalletAdjustmentInput{Amount: in.Amount, Currency: in.Currency, Reason: in.Reason, IdempotencyKey: in.IdempotencyKey})
+		if err != nil {
+			writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: err.Error()})
+			return
+		}
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "ledger_entry": entry})
+		return
+	}
 	if len(parts) == 2 && (parts[1] == "rotate" || parts[1] == "revoke") {
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w, http.MethodPost)

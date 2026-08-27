@@ -343,7 +343,8 @@ identifier as the authorization source.
   - Added `initial_credit` configuration and persisted `meterry_account_id`/`provisioning` control-plane fields.
   - Access-key creation now reuses or creates a deterministic Meterry account, binds the subject, creates the currency wallet, and applies the initial credit with an idempotency key.
   - The provisioning path uses Meterry as the authoritative ledger; Redis stores only non-sensitive provisioning metadata.
-  - Remaining in this step: administrator credit/debit/adjustment endpoints, explicit duplicate-active-account checks, and failure recovery for partially completed provisioning.
+  - Added administrator credit/debit adjustment endpoint at `/api/admin/access-keys/{name}/balance`; positive decimal amounts and caller-provided idempotency keys are required.
+  - Remaining in this step: explicit duplicate-active-account checks and failure recovery for partially completed provisioning.
   - Define the deterministic Access Key to Meterry account/subject mapping.
   - Create or bind the Meterry account and subject during Access Key provisioning.
   - Create or credit the initial wallet amount with an idempotency key derived from the Access Key/account creation operation.

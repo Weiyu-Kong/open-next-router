@@ -24,6 +24,13 @@ type CreateAccessKeyInput struct {
 	Metadata                        map[string]string
 }
 
+type WalletAdjustmentInput struct {
+	Amount         string
+	Currency       string
+	Reason         string
+	IdempotencyKey string
+}
+
 type MigrationReport struct {
 	Total, WouldMigrate, Migrated int
 	Conflicts, Skipped            []string
@@ -212,6 +219,62 @@ func (s *Service) RevokeAccessKey(ctx context.Context, name string) error {
 		return fmt.Errorf("redis access-key management is disabled")
 	}
 	return s.cp.RevokeAccessKey(ctx, name)
+}
+
+func (s *Service) AdjustAccessKeyBalance(ctx context.Context, name, operation string, in WalletAdjustmentInput) (types.WalletLedgerEntry, error) {
+	var zero types.WalletLedgerEntry
+	if s.cp == nil || s.meterry == nil {
+		return zero, fmt.Errorf("Meterry wallet management is not configured")
+	}
+	rec, err := s.cp.GetAccessKeyRecord(ctx, strings.TrimSpace(name))
+	if err != nil || rec == nil {
+		if err != nil {
+			return zero, err
+		}
+		return zero, fmt.Errorf("access key not found")
+	}
+	accountID := strings.TrimSpace(rec.MeterryAccountID)
+	if accountID == "" {
+		accountID = strings.TrimSpace(rec.AccountID)
+	}
+	if accountID == "" {
+		return zero, fmt.Errorf("access key has no Meterry account")
+	}
+	amount, err := decimal.NewFromString(strings.TrimSpace(in.Amount))
+	if err != nil || !amount.IsPositive() {
+		return zero, fmt.Errorf("amount must be a positive decimal")
+	}
+	currency := strings.TrimSpace(in.Currency)
+	if currency == "" {
+		currency = strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
+	}
+	if currency == "" {
+		currency = "USD"
+	}
+	key := strings.TrimSpace(in.IdempotencyKey)
+	if key == "" {
+		return zero, fmt.Errorf("idempotency_key is required")
+	}
+	source := strings.TrimSpace(in.Reason)
+	if source == "" {
+		source = "administrator adjustment"
+	}
+	request := types.CreditWalletRequest{AccountID: accountID, Currency: currency, Amount: amount, SourceType: "onr_admin_adjustment", SourceID: source, IdempotencyKey: key}
+	if strings.EqualFold(strings.TrimSpace(operation), "credit") {
+		response, err := s.meterry.Manager.CreditWalletForProject(ctx, s.cfg.Meterry.ProjectID, request)
+		if err != nil {
+			return zero, fmt.Errorf("credit Meterry wallet: %w", err)
+		}
+		return response.LedgerEntry, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(operation), "debit") {
+		response, err := s.meterry.Manager.DebitWalletForProject(ctx, s.cfg.Meterry.ProjectID, types.DebitWalletRequest{AccountID: accountID, Currency: currency, Amount: amount, SourceType: "onr_admin_adjustment", SourceID: source, IdempotencyKey: key})
+		if err != nil {
+			return zero, fmt.Errorf("debit Meterry wallet: %w", err)
+		}
+		return response.LedgerEntry, nil
+	}
+	return zero, fmt.Errorf("operation must be credit or debit")
 }
 func (s *Service) RotateAccessKey(ctx context.Context, name string) (string, error) {
 	if s.cp == nil {
