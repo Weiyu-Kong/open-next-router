@@ -476,15 +476,26 @@ func (s *Server) userSession(r *http.Request) (controlplane.AccessKeyRecord, boo
 		return controlplane.AccessKeyRecord{}, false
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	session, ok := s.userSessions[cookie.Value]
 	if !ok || time.Now().After(session.ExpiresAt) {
 		if ok {
 			delete(s.userSessions, cookie.Value)
 		}
+		s.mu.Unlock()
 		return controlplane.AccessKeyRecord{}, false
 	}
-	return session.Record, true
+	s.mu.Unlock()
+	if s.service == nil {
+		return controlplane.AccessKeyRecord{}, false
+	}
+	current, err := s.service.GetAccessKey(r.Context(), session.Record.Name)
+	if err != nil || current == nil {
+		s.mu.Lock()
+		delete(s.userSessions, cookie.Value)
+		s.mu.Unlock()
+		return controlplane.AccessKeyRecord{}, false
+	}
+	return *current, true
 }
 
 func newUserSessionToken() (string, error) {

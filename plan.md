@@ -366,6 +366,7 @@ identifier as the authorization source.
 - [ ] Step 9: add user-facing read APIs.
   - Added `/api/user/balance`, `/api/user/limits`, and `/api/user/usage`.
   - Added `/api/user/requests` with a bounded time range and a deliberately reduced response shape.
+  - User sessions now revalidate the active Access Key on every protected request, so revocation invalidates existing portal sessions.
   - Balance and limits are read from Meterry through the server-side Access Key account/subject mapping.
   - Usage queries support hour/day/week buckets, a bounded 31-day range, and model grouping.
   - User read endpoints use the authenticated session record and do not accept caller-supplied account or subject identifiers.
