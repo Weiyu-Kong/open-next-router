@@ -89,6 +89,34 @@ func TestSafeAccessKeyIncludesAccountAndRoutePolicy(t *testing.T) {
 	}
 }
 
+func TestUserSessionTokenIsOpaque(t *testing.T) {
+	token, err := newUserSessionToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(token) < 40 || strings.Contains(token, " ") {
+		t.Fatalf("unexpected session token: %q", token)
+	}
+}
+
+func TestUserMeRequiresSession(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.conf"), []byte(validOpenAIConf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := newServerWithOptions(dir, t.TempDir(), defaultAPIBaseURL, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+	req := httptest.NewRequest(http.MethodGet, "/api/user/me", nil)
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
 func TestSaveProviderRequiresValidationSuccess(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(dir, 0o750); err != nil {

@@ -330,8 +330,12 @@ identifier as the authorization source.
 
 ## User-Facing Implementation Roadmap
 
-- [ ] Step 6: make Access Key the user login credential.
-  - Add a user-facing login/session flow based on the Access Key.
+- [x] Step 6: make Access Key the user login credential.
+  - Added independent `/api/user/login`, `/api/user/logout`, and `/api/user/me` endpoints to the admin Web server.
+  - Login resolves only active Access Keys through the server-side control plane and returns a generic error for invalid credentials.
+  - Sessions use an opaque random HttpOnly cookie and are stored server-side with a 12-hour expiry.
+  - The user API is mounted outside the administrator Bearer-token middleware; administrator endpoints remain protected separately.
+  - Added focused tests for opaque session tokens and unauthenticated user access.
   - Keep the existing admin token flow separate from user access.
   - Add logout, session expiry, brute-force protection, and generic authentication errors.
   - Do not expose the Meterry API key or Redis credentials to the browser.

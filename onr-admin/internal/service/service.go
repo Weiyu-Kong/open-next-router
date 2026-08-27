@@ -91,6 +91,15 @@ func (s *Service) GetAccessKey(ctx context.Context, name string) (*controlplane.
 	}
 	return s.cp.GetAccessKeyRecord(ctx, name)
 }
+
+// AuthenticateAccessKey resolves an active Access Key for the user portal.
+// The plaintext secret is only used at this boundary and is never returned.
+func (s *Service) AuthenticateAccessKey(ctx context.Context, secret string) (*controlplane.AccessKeyRecord, error) {
+	if s.cp == nil {
+		return nil, fmt.Errorf("redis access-key authentication is disabled")
+	}
+	return s.cp.LookupAccessKey(ctx, secret)
+}
 func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) (string, error) {
 	if s.cp == nil {
 		return "", fmt.Errorf("redis access-key management is disabled")

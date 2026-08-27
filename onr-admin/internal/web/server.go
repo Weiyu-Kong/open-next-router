@@ -1,7 +1,9 @@
 package web
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +34,8 @@ const (
 	defaultDumpsDir    = "./dumps"
 	defaultListen      = "0.0.0.0:3310"
 	defaultAPIBaseURL  = "http://127.0.0.1:3300"
+	userSessionCookie  = "onr_user_session"
+	userSessionTTL     = 12 * time.Hour
 	envAPIBaseURL      = "ONR_ADMIN_WEB_CURL_API_BASE_URL"
 	envListen          = "ONR_ADMIN_WEB_LISTEN"
 	dumpBodyLimitBytes = 2 * 1024 * 1024
@@ -54,6 +58,12 @@ type Server struct {
 	adminToken     string
 	requireAuth    bool
 	service        *adminservice.Service
+	userSessions   map[string]userSession
+}
+
+type userSession struct {
+	Record    controlplane.AccessKeyRecord
+	ExpiresAt time.Time
 }
 
 type providerRequest struct {
@@ -219,6 +229,7 @@ func newServerWithOptions(providersDir, dumpsDir, defaultBaseURL, cfgPath, token
 		indexHTML:      renderIndexHTML(defaultBaseURL),
 		adminToken:     token,
 		requireAuth:    requireAuth,
+		userSessions:   make(map[string]userSession),
 	}
 	if strings.TrimSpace(cfgPath) != "" {
 		admin, err := adminservice.New(cfgPath)
@@ -252,8 +263,106 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/admin/access-keys/migrate/dry-run", s.handleAdminMigrate)
 	api.HandleFunc("/api/admin/access-keys/migrate", s.handleAdminMigrate)
 	api.HandleFunc("/api/admin/access-keys/", s.handleAdminAccessKey)
+	userAPI := http.NewServeMux()
+	userAPI.HandleFunc("/api/user/login", s.handleUserLogin)
+	userAPI.HandleFunc("/api/user/logout", s.handleUserLogout)
+	userAPI.HandleFunc("/api/user/me", s.handleUserMe)
+	mux.Handle("/api/user/", userAPI)
 	mux.Handle("/api/", s.authMiddleware(api))
 	return mux
+}
+
+func (s *Server) handleUserLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if s.service == nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "user authentication is not configured"})
+		return
+	}
+	var in struct {
+		AccessKey string `json:"access_key"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil || strings.TrimSpace(in.AccessKey) == "" {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid access key"})
+		return
+	}
+	record, err := s.service.AuthenticateAccessKey(r.Context(), in.AccessKey)
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "authentication service unavailable"})
+		return
+	}
+	if record == nil {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid access key"})
+		return
+	}
+	token, err := newUserSessionToken()
+	if err != nil {
+		writeJSONAny(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "could not create session"})
+		return
+	}
+	s.mu.Lock()
+	s.userSessions[token] = userSession{Record: *record, ExpiresAt: time.Now().Add(userSessionTTL)}
+	s.mu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: userSessionCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(userSessionTTL.Seconds())})
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "account": safeUserAccount(*record), "expires_at": time.Now().Add(userSessionTTL)})
+}
+
+func (s *Server) handleUserLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if cookie, err := r.Cookie(userSessionCookie); err == nil {
+		s.mu.Lock()
+		delete(s.userSessions, cookie.Value)
+		s.mu.Unlock()
+	}
+	http.SetCookie(w, &http.Cookie{Name: userSessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleUserMe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	record, ok := s.userSession(r)
+	if !ok {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
+		return
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "account": safeUserAccount(record)})
+}
+
+func (s *Server) userSession(r *http.Request) (controlplane.AccessKeyRecord, bool) {
+	cookie, err := r.Cookie(userSessionCookie)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return controlplane.AccessKeyRecord{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.userSessions[cookie.Value]
+	if !ok || time.Now().After(session.ExpiresAt) {
+		if ok {
+			delete(s.userSessions, cookie.Value)
+		}
+		return controlplane.AccessKeyRecord{}, false
+	}
+	return session.Record, true
+}
+
+func newUserSessionToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func safeUserAccount(v controlplane.AccessKeyRecord) map[string]any {
+	return map[string]any{"access_key_id": v.Name, "account_id": v.AccountID, "subject_type": v.SubjectType, "subject_id": v.SubjectID, "route_policy_id": v.RoutePolicyID}
 }
 
 func (s *Server) Close() error {
