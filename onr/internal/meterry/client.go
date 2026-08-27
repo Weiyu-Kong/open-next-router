@@ -32,6 +32,38 @@ type Config struct {
 	ControlPlane            *controlplane.Client
 }
 
+// QueryScope identifies the billing identity that a server-side query may
+// inspect. Callers should populate it from an authenticated Access Key.
+type QueryScope struct {
+	AccountID   string
+	SubjectType string
+	SubjectID   string
+}
+
+func (s QueryScope) valid() bool {
+	return strings.TrimSpace(s.AccountID) != "" || (strings.TrimSpace(s.SubjectType) != "" && strings.TrimSpace(s.SubjectID) != "")
+}
+
+func (s QueryScope) walletRequest(currency string) types.ReadVirtualWalletRequest {
+	return types.ReadVirtualWalletRequest{
+		AccountID: strings.TrimSpace(s.AccountID), SubjectType: strings.TrimSpace(s.SubjectType),
+		SubjectID: strings.TrimSpace(s.SubjectID), Currency: strings.TrimSpace(currency),
+	}
+}
+
+// UsageQuery is the bounded, server-side form of a Meterry analytics query.
+type UsageQuery struct {
+	QueryScope
+	BucketSize string
+	Metrics    []string
+	StartTime  int64
+	EndTime    int64
+	Filters    map[string]string
+	GroupBy    []string
+	Measures   []string
+	Limit      int
+}
+
 type balanceCacheEntry struct {
 	allowed   bool
 	expiresAt time.Time
@@ -139,6 +171,91 @@ func (c *Client) Enabled() bool { return c != nil && c.cfg.Enabled }
 
 func (c *Client) BalanceEnabled() bool {
 	return c != nil && c.cfg.Enabled && c.cfg.BalanceEnabled
+}
+
+func (c *Client) ensureQueryClient() error {
+	if c == nil || !c.Enabled() || c.sdk == nil {
+		return errors.New("meterry is disabled")
+	}
+	return nil
+}
+
+// ReadBalance returns the authoritative wallet amount for a billing scope.
+func (c *Client) ReadBalance(ctx context.Context, scope QueryScope, currency string) (*types.VirtualWalletAmountSnapshot, error) {
+	if err := c.ensureQueryClient(); err != nil {
+		return nil, err
+	}
+	if !scope.valid() {
+		return nil, errors.New("meterry query scope is empty")
+	}
+	return c.sdk.Manager.ReadVirtualWalletAmountForProject(ctx, c.cfg.ProjectID, scope.walletRequest(currency))
+}
+
+// ReadLimits returns subject usage-control limits for a billing scope.
+func (c *Client) ReadLimits(ctx context.Context, scope QueryScope, currency string) (*types.VirtualWalletLimitsSnapshot, error) {
+	if err := c.ensureQueryClient(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(scope.SubjectType) == "" || strings.TrimSpace(scope.SubjectID) == "" {
+		return nil, errors.New("meterry limits require subject type and subject id")
+	}
+	return c.sdk.Manager.ReadVirtualWalletLimitsForProject(ctx, c.cfg.ProjectID, scope.walletRequest(currency))
+}
+
+// QueryUsage returns grouped usage analytics for the authenticated scope.
+func (c *Client) QueryUsage(ctx context.Context, query UsageQuery) (*types.UsageAnalyticsQueryResponse, error) {
+	if err := c.ensureQueryClient(); err != nil {
+		return nil, err
+	}
+	if !query.QueryScope.valid() {
+		return nil, errors.New("meterry query scope is empty")
+	}
+	return c.sdk.Query.UsageForProject(ctx, c.cfg.ProjectID, types.UsageAnalyticsQueryRequest{
+		BucketSize: query.BucketSize, SubjectType: strings.TrimSpace(query.SubjectType), SubjectID: strings.TrimSpace(query.SubjectID),
+		Metrics: query.Metrics, StartTime: query.StartTime, EndTime: query.EndTime, Filters: query.Filters,
+		GroupBy: query.GroupBy, Measures: query.Measures, Limit: query.Limit,
+	})
+}
+
+// QueryBills returns charge-oriented rows for the authenticated scope.
+func (c *Client) QueryBills(ctx context.Context, query UsageQuery, timezone, cursor string) (*types.UsageBillQueryResponse, error) {
+	if err := c.ensureQueryClient(); err != nil {
+		return nil, err
+	}
+	if !query.QueryScope.valid() {
+		return nil, errors.New("meterry query scope is empty")
+	}
+	return c.sdk.Query.BillForProject(ctx, c.cfg.ProjectID, types.UsageBillQueryRequest{
+		Timezone: timezone, Cursor: cursor, SubjectType: strings.TrimSpace(query.SubjectType), SubjectID: strings.TrimSpace(query.SubjectID),
+		BillingAccountID: strings.TrimSpace(query.AccountID), Metrics: query.Metrics, StartTime: query.StartTime, EndTime: query.EndTime,
+		Filters: query.Filters, GroupBy: query.GroupBy, Limit: query.Limit,
+	})
+}
+
+// QueryEvents returns raw usage event rows for the authenticated scope.
+func (c *Client) QueryEvents(ctx context.Context, scope QueryScope, startTime, endTime int64, limit int) (*types.ListUsageEventLogsResponse, error) {
+	if err := c.ensureQueryClient(); err != nil {
+		return nil, err
+	}
+	if !scope.valid() {
+		return nil, errors.New("meterry query scope is empty")
+	}
+	return c.sdk.Query.ListProjectUsageEvents(ctx, c.cfg.ProjectID, types.ListUsageEventLogsRequest{
+		SubjectType: strings.TrimSpace(scope.SubjectType), SubjectID: strings.TrimSpace(scope.SubjectID), StartTime: startTime, EndTime: endTime, Limit: limit,
+	})
+}
+
+// QueryEventDetails returns charge-item details for the authenticated scope.
+func (c *Client) QueryEventDetails(ctx context.Context, scope QueryScope, startTime, endTime int64, limit int) (*types.ListUsageEventDetailsResponse, error) {
+	if err := c.ensureQueryClient(); err != nil {
+		return nil, err
+	}
+	if !scope.valid() {
+		return nil, errors.New("meterry query scope is empty")
+	}
+	return c.sdk.Query.ListProjectUsageEventDetails(ctx, c.cfg.ProjectID, types.ListUsageEventLogsRequest{
+		SubjectType: strings.TrimSpace(scope.SubjectType), SubjectID: strings.TrimSpace(scope.SubjectID), StartTime: startTime, EndTime: endTime, Limit: limit,
+	})
 }
 
 func (c *Client) CheckBalance(ctx context.Context, subjectType, subjectID string) (bool, error) {

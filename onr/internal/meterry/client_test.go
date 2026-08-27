@@ -1,6 +1,7 @@
 package meterry
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -50,6 +51,47 @@ func TestClientSendsQueuedEvent(t *testing.T) {
 	}
 	if err := c.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestQueryScopeValidation(t *testing.T) {
+	if (QueryScope{}).valid() {
+		t.Fatal("empty query scope must be invalid")
+	}
+	if !(QueryScope{AccountID: " acct_1 "}).valid() {
+		t.Fatal("account query scope must be valid")
+	}
+	if !(QueryScope{SubjectType: "api_key", SubjectID: "key_1"}).valid() {
+		t.Fatal("subject query scope must be valid")
+	}
+	if (QueryScope{SubjectType: "api_key"}).valid() {
+		t.Fatal("partial subject query scope must be invalid")
+	}
+}
+
+func TestDisabledQueryMethodsRejectBeforeSDKCall(t *testing.T) {
+	c, err := New(Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := c.ReadBalance(ctx, QueryScope{AccountID: "acct_1"}, "USD"); err == nil {
+		t.Fatal("ReadBalance should reject disabled client")
+	}
+	if _, err := c.ReadLimits(ctx, QueryScope{SubjectType: "api_key", SubjectID: "key_1"}, "USD"); err == nil {
+		t.Fatal("ReadLimits should reject disabled client")
+	}
+	if _, err := c.QueryUsage(ctx, UsageQuery{QueryScope: QueryScope{AccountID: "acct_1"}}); err == nil {
+		t.Fatal("QueryUsage should reject disabled client")
+	}
+	if _, err := c.QueryBills(ctx, UsageQuery{QueryScope: QueryScope{AccountID: "acct_1"}}, "UTC", ""); err == nil {
+		t.Fatal("QueryBills should reject disabled client")
+	}
+	if _, err := c.QueryEvents(ctx, QueryScope{SubjectType: "api_key", SubjectID: "key_1"}, 0, 0, 10); err == nil {
+		t.Fatal("QueryEvents should reject disabled client")
+	}
+	if _, err := c.QueryEventDetails(ctx, QueryScope{SubjectType: "api_key", SubjectID: "key_1"}, 0, 0, 10); err == nil {
+		t.Fatal("QueryEventDetails should reject disabled client")
 	}
 }
 
