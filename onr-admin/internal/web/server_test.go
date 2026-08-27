@@ -70,14 +70,22 @@ provider "openai" {
 
 func TestSafeAccessKeyIncludesAccountAndRoutePolicy(t *testing.T) {
 	record := safeAccessKey(controlplane.AccessKeyRecord{
-		Name:          "client-a",
-		SubjectType:   "api_key",
-		SubjectID:     "subject-a",
-		AccountID:     "account-a",
-		RoutePolicyID: "standard-user",
+		Name:             "client-a",
+		SubjectType:      "api_key",
+		SubjectID:        "subject-a",
+		AccountID:        "account-a",
+		RoutePolicyID:    "standard-user",
+		AllowedProviders: []string{"openai"},
+		AllowedModels:    []string{"gpt-4o-mini"},
 	})
 	if record["account_id"] != "account-a" || record["route_policy_id"] != "standard-user" {
 		t.Fatalf("safe access key=%v", record)
+	}
+	if got := record["allowed_providers"].([]string); len(got) != 1 || got[0] != "openai" {
+		t.Fatalf("allowed providers=%v", got)
+	}
+	if got := record["allowed_models"].([]string); len(got) != 1 || got[0] != "gpt-4o-mini" {
+		t.Fatalf("allowed models=%v", got)
 	}
 }
 

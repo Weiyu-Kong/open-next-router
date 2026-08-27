@@ -109,11 +109,13 @@ func NewRouter(
 						accountID = subjectID
 					}
 					return auth.AuthPrincipal{
-						AccessKeyID:   strings.TrimSpace(record.Name),
-						AccountID:     accountID,
-						SubjectType:   subjectType,
-						SubjectID:     subjectID,
-						RoutePolicyID: strings.TrimSpace(record.RoutePolicyID),
+						AccessKeyID:      strings.TrimSpace(record.Name),
+						AccountID:        accountID,
+						SubjectType:      subjectType,
+						SubjectID:        subjectID,
+						RoutePolicyID:    strings.TrimSpace(record.RoutePolicyID),
+						AllowedProviders: append([]string(nil), record.AllowedProviders...),
+						AllowedModels:    append([]string(nil), record.AllowedModels...),
 					}, true, nil
 				}
 				if cfg.Redis.AccessKeyMode == "redis_only" {

@@ -45,15 +45,17 @@ func TestAccessKeysModelIncludesAdministrativeStatuses(t *testing.T) {
 
 func TestRenderAccessDetailIncludesAccountAndRoutePolicy(t *testing.T) {
 	record := controlplane.AccessKeyRecord{
-		Name:          "client-a",
-		Status:        "active",
-		SubjectType:   "api_key",
-		SubjectID:     "subject-a",
-		AccountID:     "account-a",
-		RoutePolicyID: "standard-user",
+		Name:             "client-a",
+		Status:           "active",
+		SubjectType:      "api_key",
+		SubjectID:        "subject-a",
+		AccountID:        "account-a",
+		RoutePolicyID:    "standard-user",
+		AllowedProviders: []string{"openai"},
+		AllowedModels:    []string{"gpt-4o-mini"},
 	}
 	view := renderAccessDetail(record, controlplane.SubjectState{})
-	if !strings.Contains(view, "account: account-a") || !strings.Contains(view, "route policy: standard-user") {
+	if !strings.Contains(view, "account: account-a") || !strings.Contains(view, "route policy: standard-user") || !strings.Contains(view, "providers: openai") || !strings.Contains(view, "models: gpt-4o-mini") {
 		t.Fatalf("access detail=%q", view)
 	}
 }

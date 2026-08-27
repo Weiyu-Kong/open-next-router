@@ -35,12 +35,14 @@ func TestAccessKeyRoundTripAndRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := AccessKeyRecord{
-		Name:          "client-a",
-		SecretHash:    c.HashAccessKey(secret),
-		SubjectType:   "api_key",
-		SubjectID:     "client-a",
-		AccountID:     "account-a",
-		RoutePolicyID: "standard-user",
+		Name:             "client-a",
+		SecretHash:       c.HashAccessKey(secret),
+		SubjectType:      "api_key",
+		SubjectID:        "client-a",
+		AccountID:        "account-a",
+		RoutePolicyID:    "standard-user",
+		AllowedProviders: []string{"OpenAI", " anthropic ", "openai"},
+		AllowedModels:    []string{" gpt-4o-mini ", "claude-3", "claude-3"},
 	}
 	if err := c.CreateAccessKey(context.Background(), record); err != nil {
 		t.Fatal(err)
@@ -51,6 +53,12 @@ func TestAccessKeyRoundTripAndRevoke(t *testing.T) {
 	got, err := c.LookupAccessKey(context.Background(), secret)
 	if err != nil || got == nil || got.Name != "client-a" || got.AccountID != "account-a" || got.RoutePolicyID != "standard-user" {
 		t.Fatalf("LookupAccessKey=(%+v,%v)", got, err)
+	}
+	if providers, want := got.AllowedProviders, []string{"openai", "anthropic"}; len(providers) != len(want) || providers[0] != want[0] || providers[1] != want[1] {
+		t.Fatalf("AllowedProviders=%v want=%v", providers, want)
+	}
+	if models, want := got.AllowedModels, []string{"gpt-4o-mini", "claude-3"}; len(models) != len(want) || models[0] != want[0] || models[1] != want[1] {
+		t.Fatalf("AllowedModels=%v want=%v", models, want)
 	}
 	if err := c.RevokeAccessKey(context.Background(), "client-a"); err != nil {
 		t.Fatal(err)

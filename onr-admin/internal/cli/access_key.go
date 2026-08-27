@@ -22,12 +22,14 @@ func newAccessKeyCmd() *cobra.Command {
 }
 
 type accessKeyOptions struct {
-	cfgPath       string
-	name          string
-	subjectType   string
-	subjectID     string
-	accountID     string
-	routePolicyID string
+	cfgPath          string
+	name             string
+	subjectType      string
+	subjectID        string
+	accountID        string
+	routePolicyID    string
+	allowedProviders string
+	allowedModels    string
 }
 
 func newAccessKeyCreateCmd() *cobra.Command {
@@ -50,18 +52,20 @@ func newAccessKeyCreateCmd() *cobra.Command {
 			accountID = strings.TrimSpace(opts.subjectID)
 		}
 		record := controlplane.AccessKeyRecord{
-			Name:          opts.name,
-			SecretHash:    client.HashAccessKey(secret),
-			Status:        "active",
-			SubjectType:   opts.subjectType,
-			SubjectID:     opts.subjectID,
-			AccountID:     accountID,
-			RoutePolicyID: strings.TrimSpace(opts.routePolicyID),
+			Name:             opts.name,
+			SecretHash:       client.HashAccessKey(secret),
+			Status:           "active",
+			SubjectType:      opts.subjectType,
+			SubjectID:        opts.subjectID,
+			AccountID:        accountID,
+			RoutePolicyID:    strings.TrimSpace(opts.routePolicyID),
+			AllowedProviders: parseCommaList(opts.allowedProviders, true),
+			AllowedModels:    parseCommaList(opts.allowedModels, false),
 		}
 		if err := client.CreateAccessKey(context.Background(), record); err != nil {
 			return err
 		}
-		fmt.Printf("name=%s account=%s subject=%s/%s route_policy=%s secret=%s\n", record.Name, record.AccountID, record.SubjectType, record.SubjectID, record.RoutePolicyID, secret)
+		fmt.Printf("name=%s account=%s subject=%s/%s route_policy=%s providers=%s models=%s secret=%s\n", record.Name, record.AccountID, record.SubjectType, record.SubjectID, record.RoutePolicyID, strings.Join(record.AllowedProviders, ","), strings.Join(record.AllowedModels, ","), secret)
 		return nil
 	}}
 	addAccessKeyFlags(cmd, &opts, true)
@@ -82,7 +86,7 @@ func newAccessKeyListCmd() *cobra.Command {
 		}
 		sort.Slice(records, func(i, j int) bool { return records[i].Name < records[j].Name })
 		for _, record := range records {
-			fmt.Printf("name=%s status=%s account=%s subject=%s/%s route_policy=%s version=%d\n", record.Name, record.Status, record.AccountID, record.SubjectType, record.SubjectID, record.RoutePolicyID, record.Version)
+			fmt.Printf("name=%s status=%s account=%s subject=%s/%s route_policy=%s providers=%s models=%s version=%d\n", record.Name, record.Status, record.AccountID, record.SubjectType, record.SubjectID, record.RoutePolicyID, strings.Join(record.AllowedProviders, ","), strings.Join(record.AllowedModels, ","), record.Version)
 		}
 		return nil
 	}}
@@ -186,7 +190,30 @@ func addAccessKeyFlags(cmd *cobra.Command, opts *accessKeyOptions, subject bool)
 		cmd.Flags().StringVar(&opts.subjectID, "subject-id", "", "Meterry subject ID")
 		cmd.Flags().StringVar(&opts.accountID, "account-id", "", "Account ID; defaults to subject ID")
 		cmd.Flags().StringVar(&opts.routePolicyID, "route-policy-id", "", "Route policy ID for future access control")
+		cmd.Flags().StringVar(&opts.allowedProviders, "allowed-providers", "", "Comma-separated provider allowlist")
+		cmd.Flags().StringVar(&opts.allowedModels, "allowed-models", "", "Comma-separated model allowlist")
 	}
+}
+
+func parseCommaList(raw string, lower bool) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		if lower {
+			value = strings.ToLower(value)
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func openControlPlane(cfgPath string) (*controlplane.Client, error) {

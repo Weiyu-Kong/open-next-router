@@ -32,11 +32,13 @@ func TestMiddlewareWithResolverPropagatesPrincipal(t *testing.T) {
 	r := gin.New()
 	r.Use(MiddlewareWithResolver("", func(context.Context, string) (AuthPrincipal, bool, error) {
 		return AuthPrincipal{
-			AccessKeyID:   "key-record",
-			AccountID:     "account-1",
-			SubjectType:   "account",
-			SubjectID:     "acct-1",
-			RoutePolicyID: "standard-user",
+			AccessKeyID:      "key-record",
+			AccountID:        "account-1",
+			SubjectType:      "account",
+			SubjectID:        "acct-1",
+			RoutePolicyID:    "standard-user",
+			AllowedProviders: []string{"openai"},
+			AllowedModels:    []string{"gpt-4o-mini"},
 		}, true, nil
 	}))
 	r.GET("/ok", func(c *gin.Context) {
@@ -53,6 +55,10 @@ func TestMiddlewareWithResolverPropagatesPrincipal(t *testing.T) {
 			c.String(http.StatusInternalServerError, "getter mismatch")
 			return
 		}
+		if !principal.AllowsProvider("openai") || !principal.AllowsModel("gpt-4o-mini") {
+			c.String(http.StatusInternalServerError, "policy mismatch")
+			return
+		}
 		c.String(http.StatusOK, "ok")
 	})
 
@@ -62,6 +68,16 @@ func TestMiddlewareWithResolverPropagatesPrincipal(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestAuthPrincipalAccessPolicies(t *testing.T) {
+	p := AuthPrincipal{AllowedProviders: []string{"OpenAI", " anthropic "}, AllowedModels: []string{"gpt-4o-mini", "claude-3"}}
+	if !p.AllowsProvider("openai") || !p.AllowsProvider("ANTHROPIC") || p.AllowsProvider("gemini") {
+		t.Fatalf("provider policy mismatch: %+v", p)
+	}
+	if !p.AllowsModel("gpt-4o-mini") || p.AllowsModel("gpt-4o") {
+		t.Fatalf("model policy mismatch: %+v", p)
 	}
 }
 

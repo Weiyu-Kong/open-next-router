@@ -147,13 +147,15 @@ type editorFormatResponse struct {
 }
 
 type adminAccessKeyInput struct {
-	Name          string            `json:"name"`
-	SubjectType   string            `json:"subject_type"`
-	SubjectID     string            `json:"subject_id"`
-	AccountID     string            `json:"account_id"`
-	RoutePolicyID string            `json:"route_policy_id"`
-	ExpiresAt     string            `json:"expires_at"`
-	Metadata      map[string]string `json:"metadata"`
+	Name             string            `json:"name"`
+	SubjectType      string            `json:"subject_type"`
+	SubjectID        string            `json:"subject_id"`
+	AccountID        string            `json:"account_id"`
+	RoutePolicyID    string            `json:"route_policy_id"`
+	AllowedProviders string            `json:"allowed_providers"`
+	AllowedModels    string            `json:"allowed_models"`
+	ExpiresAt        string            `json:"expires_at"`
+	Metadata         map[string]string `json:"metadata"`
 }
 type adminAccessKeyResponse struct {
 	OK      bool   `json:"ok"`
@@ -708,13 +710,15 @@ func (s *Server) handleAdminAccessKeys(w http.ResponseWriter, r *http.Request) {
 			exp = &t
 		}
 		secret, e := s.service.CreateAccessKey(r.Context(), adminservice.CreateAccessKeyInput{
-			Name:          strings.TrimSpace(in.Name),
-			SubjectType:   strings.TrimSpace(in.SubjectType),
-			SubjectID:     strings.TrimSpace(in.SubjectID),
-			AccountID:     strings.TrimSpace(in.AccountID),
-			RoutePolicyID: strings.TrimSpace(in.RoutePolicyID),
-			ExpiresAt:     exp,
-			Metadata:      in.Metadata,
+			Name:             strings.TrimSpace(in.Name),
+			SubjectType:      strings.TrimSpace(in.SubjectType),
+			SubjectID:        strings.TrimSpace(in.SubjectID),
+			AccountID:        strings.TrimSpace(in.AccountID),
+			RoutePolicyID:    strings.TrimSpace(in.RoutePolicyID),
+			AllowedProviders: strings.TrimSpace(in.AllowedProviders),
+			AllowedModels:    strings.TrimSpace(in.AllowedModels),
+			ExpiresAt:        exp,
+			Metadata:         in.Metadata,
 		})
 		if e != nil {
 			writeJSONAny(w, http.StatusServiceUnavailable, adminAccessKeyResponse{Error: e.Error()})
@@ -728,16 +732,18 @@ func (s *Server) handleAdminAccessKeys(w http.ResponseWriter, r *http.Request) {
 
 func safeAccessKey(v controlplane.AccessKeyRecord) map[string]any {
 	return map[string]any{
-		"name":            v.Name,
-		"status":          v.Status,
-		"subject_type":    v.SubjectType,
-		"subject_id":      v.SubjectID,
-		"account_id":      v.AccountID,
-		"route_policy_id": v.RoutePolicyID,
-		"created_at":      v.CreatedAt,
-		"expires_at":      v.ExpiresAt,
-		"version":         v.Version,
-		"metadata":        v.Metadata,
+		"name":              v.Name,
+		"status":            v.Status,
+		"subject_type":      v.SubjectType,
+		"subject_id":        v.SubjectID,
+		"account_id":        v.AccountID,
+		"route_policy_id":   v.RoutePolicyID,
+		"allowed_providers": v.AllowedProviders,
+		"allowed_models":    v.AllowedModels,
+		"created_at":        v.CreatedAt,
+		"expires_at":        v.ExpiresAt,
+		"version":           v.Version,
+		"metadata":          v.Metadata,
 	}
 }
 

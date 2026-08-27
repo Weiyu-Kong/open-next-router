@@ -16,11 +16,13 @@ type AccessKeyResolver func(ctx context.Context, accessKey string) (principal Au
 // SubjectType and SubjectID are intentionally separate from AccessKeyID because
 // multiple access keys may belong to the same billing subject.
 type AuthPrincipal struct {
-	AccessKeyID   string
-	AccountID     string
-	SubjectType   string
-	SubjectID     string
-	RoutePolicyID string
+	AccessKeyID      string
+	AccountID        string
+	SubjectType      string
+	SubjectID        string
+	RoutePolicyID    string
+	AllowedProviders []string
+	AllowedModels    []string
 }
 
 const (
@@ -139,7 +141,7 @@ func authenticateToken(c *gin.Context, got, expected string, resolver AccessKeyR
 	if !ok {
 		return false, nil
 	}
-	if ok && principal != (AuthPrincipal{}) {
+	if ok && principal.HasAnyData() {
 		setPrincipal(c, principal)
 	}
 	if claims.Provider != "" {
@@ -164,6 +166,8 @@ func setPrincipal(c *gin.Context, principal AuthPrincipal) {
 	principal.SubjectType = strings.TrimSpace(principal.SubjectType)
 	principal.SubjectID = strings.TrimSpace(principal.SubjectID)
 	principal.RoutePolicyID = strings.TrimSpace(principal.RoutePolicyID)
+	principal.AllowedProviders = normalizeAllowedValues(principal.AllowedProviders, true)
+	principal.AllowedModels = normalizeAllowedValues(principal.AllowedModels, false)
 	c.Set(ctxAuthPrincipal, principal)
 	if principal.AccessKeyID != "" {
 		c.Set(ctxAuthAccessKeyID, principal.AccessKeyID)
@@ -233,6 +237,69 @@ func RoutePolicyID(c *gin.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(c.GetString(ctxAuthRoutePolicy))
+}
+
+// AllowsProvider reports whether the principal is allowed to use the provider.
+func (p AuthPrincipal) AllowsProvider(provider string) bool {
+	return allowsAccessKeyValue(p.AllowedProviders, provider, true)
+}
+
+// AllowsModel reports whether the principal is allowed to use the requested model.
+func (p AuthPrincipal) AllowsModel(model string) bool {
+	return allowsAccessKeyValue(p.AllowedModels, model, false)
+}
+
+func allowsAccessKeyValue(values []string, value string, lower bool) bool {
+	value = strings.TrimSpace(value)
+	if len(values) == 0 {
+		return true
+	}
+	if value == "" {
+		return false
+	}
+	if lower {
+		value = strings.ToLower(value)
+	}
+	for _, allowed := range values {
+		allowed = strings.TrimSpace(allowed)
+		if lower {
+			allowed = strings.ToLower(allowed)
+		}
+		if allowed == value {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeAllowedValues(values []string, lower bool) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			continue
+		}
+		if lower {
+			v = strings.ToLower(v)
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func (p AuthPrincipal) HasAnyData() bool {
+	return strings.TrimSpace(p.AccessKeyID) != "" ||
+		strings.TrimSpace(p.AccountID) != "" ||
+		strings.TrimSpace(p.SubjectType) != "" ||
+		strings.TrimSpace(p.SubjectID) != "" ||
+		strings.TrimSpace(p.RoutePolicyID) != "" ||
+		len(p.AllowedProviders) > 0 ||
+		len(p.AllowedModels) > 0
 }
 
 func parseToken(got string, allowBYOKWithoutK bool) (*TokenClaims, string) {

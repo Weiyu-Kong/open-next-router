@@ -14,10 +14,11 @@ import (
 )
 
 type CreateAccessKeyInput struct {
-	Name, SubjectType, SubjectID string
-	AccountID, RoutePolicyID     string
-	ExpiresAt                    *time.Time
-	Metadata                     map[string]string
+	Name, SubjectType, SubjectID    string
+	AccountID, RoutePolicyID        string
+	AllowedProviders, AllowedModels string
+	ExpiresAt                       *time.Time
+	Metadata                        map[string]string
 }
 
 type MigrationReport struct {
@@ -103,15 +104,17 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		accountID = strings.TrimSpace(in.SubjectID)
 	}
 	rec := controlplane.AccessKeyRecord{
-		Name:          in.Name,
-		SecretHash:    s.cp.HashAccessKey(secret),
-		Status:        "active",
-		SubjectType:   in.SubjectType,
-		SubjectID:     in.SubjectID,
-		AccountID:     accountID,
-		RoutePolicyID: strings.TrimSpace(in.RoutePolicyID),
-		ExpiresAt:     in.ExpiresAt,
-		Metadata:      in.Metadata,
+		Name:             in.Name,
+		SecretHash:       s.cp.HashAccessKey(secret),
+		Status:           "active",
+		SubjectType:      in.SubjectType,
+		SubjectID:        in.SubjectID,
+		AccountID:        accountID,
+		RoutePolicyID:    strings.TrimSpace(in.RoutePolicyID),
+		AllowedProviders: parseCommaList(in.AllowedProviders, true),
+		AllowedModels:    parseCommaList(in.AllowedModels, false),
+		ExpiresAt:        in.ExpiresAt,
+		Metadata:         in.Metadata,
 	}
 	if e = s.cp.CreateAccessKey(ctx, rec); e != nil {
 		return "", e
@@ -210,6 +213,28 @@ func redact(v string) string {
 	}
 	return v[:6] + "..." + v[len(v)-4:]
 }
+
+func parseCommaList(raw string, lower bool) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		if lower {
+			value = strings.ToLower(value)
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
 func (s *Service) MigrateAccessKeys(ctx context.Context, path string, dry bool) (MigrationReport, error) {
 	var r MigrationReport
 	if s.cp == nil {

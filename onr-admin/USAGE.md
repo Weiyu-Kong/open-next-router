@@ -30,6 +30,8 @@ When creating a Redis-backed access key, `--account-id` optionally groups
 multiple access keys under one account. If omitted, it defaults to
 `--subject-id`. `--route-policy-id` stores the future routing-policy
 association; this iteration does not enforce that policy yet.
+`--allowed-providers` and `--allowed-models` accept comma-separated allowlists.
+If either list is empty, that dimension remains unrestricted.
 
 ```bash
 onr-admin access-key create \
@@ -38,7 +40,9 @@ onr-admin access-key create \
   --subject-type api_key \
   --subject-id account-a \
   --account-id account-a \
-  --route-policy-id standard-user
+  --route-policy-id standard-user \
+  --allowed-providers openai,anthropic \
+  --allowed-models gpt-4o-mini,claude-3
 ```
 
 ## 3. crypto

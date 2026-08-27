@@ -104,7 +104,7 @@ func (s *adminService) GetAccessKey(ctx context.Context, name string) (*controlp
 	return s.cp.GetAccessKeyRecord(ctx, name)
 }
 
-func (s *adminService) CreateAccessKey(ctx context.Context, name, subjectType, subjectID, accountID, routePolicyID string, expiresAt *time.Time, metadata map[string]string) (string, error) {
+func (s *adminService) CreateAccessKey(ctx context.Context, name, subjectType, subjectID, accountID, routePolicyID, allowedProviders, allowedModels string, expiresAt *time.Time, metadata map[string]string) (string, error) {
 	if s.cp == nil {
 		return "", fmt.Errorf("redis access-key management is disabled")
 	}
@@ -117,9 +117,17 @@ func (s *adminService) CreateAccessKey(ctx context.Context, name, subjectType, s
 		accountID = strings.TrimSpace(subjectID)
 	}
 	record := controlplane.AccessKeyRecord{
-		Name: name, SecretHash: s.cp.HashAccessKey(secret), Status: "active",
-		SubjectType: subjectType, SubjectID: subjectID, AccountID: accountID,
-		RoutePolicyID: strings.TrimSpace(routePolicyID), ExpiresAt: expiresAt, Metadata: metadata,
+		Name:             name,
+		SecretHash:       s.cp.HashAccessKey(secret),
+		Status:           "active",
+		SubjectType:      subjectType,
+		SubjectID:        subjectID,
+		AccountID:        accountID,
+		RoutePolicyID:    strings.TrimSpace(routePolicyID),
+		AllowedProviders: parseCommaList(allowedProviders, true),
+		AllowedModels:    parseCommaList(allowedModels, false),
+		ExpiresAt:        expiresAt,
+		Metadata:         metadata,
 	}
 	if err := s.cp.CreateAccessKey(ctx, record); err != nil {
 		return "", err
@@ -209,6 +217,27 @@ func redactIdentifier(value string) string {
 		return value
 	}
 	return value[:6] + "..." + value[len(value)-4:]
+}
+
+func parseCommaList(raw string, lower bool) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		if lower {
+			value = strings.ToLower(value)
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func (s *adminService) Migrate(ctx context.Context, keysPath string, dryRun bool) (migrationReport, error) {

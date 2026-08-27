@@ -57,9 +57,6 @@ func makeGeminiHandler(cfg *config.Config, st *state, pclient *proxy.Client, req
 			writeOpenAIError(c, requestIDHeaderKey, "invalid_json", err.Error())
 			return
 		}
-		if !enforceBillingBalance(cfg, billing, c, requestIDHeaderKey) {
-			return
-		}
 
 		if rec := trafficdump.FromContext(c); rec != nil && rec.MaxBytes() > 0 {
 			ct := ""
@@ -84,6 +81,13 @@ func makeGeminiHandler(cfg *config.Config, st *state, pclient *proxy.Client, req
 				"provider_not_selected",
 				"no provider selected: set x-onr-provider or configure models.yaml",
 			)
+			return
+		}
+		principal, _ := auth.PrincipalFromContext(c)
+		if !authorizeAccessKeyRequest(c, requestIDHeaderKey, principal, provider, model) {
+			return
+		}
+		if !enforceBillingBalance(cfg, billing, c, requestIDHeaderKey) {
 			return
 		}
 

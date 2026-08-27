@@ -246,7 +246,12 @@ Access Key 在 Redis 中只保存 route_policy_id，不要把大量隐式供应�
   - Redis writes normalize missing `subject_id` to the access-key name and missing `account_id` to `subject_id`.
   - Redis administrative reads also normalize legacy JSON records in memory, including records without a stored name.
   - `route_policy_id` is metadata only in this step; it is not yet used to authorize provider/model selection.
-- [ ] Step 3: add provider/model authorization rules per access key.
+- [x] Step 3: add provider/model authorization rules per access key.
+  - Added `allowed_providers` and `allowed_models` to Redis-backed access keys and authenticated principals.
+  - Enforced provider/model allowlists in the OpenAI-style and Gemini request handlers before proxying upstream.
+  - Added admin CLI, Web UI, and TUI input/display support for allowlists.
+  - Provider allowlists are matched case-insensitively; model allowlists are matched by trimmed exact value.
+  - Empty allowlists remain unrestricted for backward compatibility.
 - [ ] Step 4: add an authoritative ledger only if the product later requires stricter accounting.
 
 Verification note: `gofmt` and `go test ./...` passed with Go 1.26.6 using `/tmp` Go caches.

@@ -43,17 +43,19 @@ type Client struct {
 }
 
 type AccessKeyRecord struct {
-	Name          string            `json:"name"`
-	SecretHash    string            `json:"secret_hash"`
-	Status        string            `json:"status"`
-	SubjectType   string            `json:"subject_type"`
-	SubjectID     string            `json:"subject_id"`
-	AccountID     string            `json:"account_id,omitempty"`
-	RoutePolicyID string            `json:"route_policy_id,omitempty"`
-	CreatedAt     time.Time         `json:"created_at"`
-	ExpiresAt     *time.Time        `json:"expires_at,omitempty"`
-	Version       int64             `json:"version"`
-	Metadata      map[string]string `json:"metadata,omitempty"`
+	Name             string            `json:"name"`
+	SecretHash       string            `json:"secret_hash"`
+	Status           string            `json:"status"`
+	SubjectType      string            `json:"subject_type"`
+	SubjectID        string            `json:"subject_id"`
+	AccountID        string            `json:"account_id,omitempty"`
+	RoutePolicyID    string            `json:"route_policy_id,omitempty"`
+	AllowedProviders []string          `json:"allowed_providers,omitempty"`
+	AllowedModels    []string          `json:"allowed_models,omitempty"`
+	CreatedAt        time.Time         `json:"created_at"`
+	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
+	Version          int64             `json:"version"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
 type SubjectState struct {
@@ -294,6 +296,8 @@ func normalizeAccessKeyRecord(record AccessKeyRecord) AccessKeyRecord {
 	record.SubjectID = strings.TrimSpace(record.SubjectID)
 	record.AccountID = strings.TrimSpace(record.AccountID)
 	record.RoutePolicyID = strings.TrimSpace(record.RoutePolicyID)
+	record.AllowedProviders = normalizeAccessKeyValues(record.AllowedProviders, true)
+	record.AllowedModels = normalizeAccessKeyValues(record.AllowedModels, false)
 	if record.SubjectID == "" {
 		record.SubjectID = record.Name
 	}
@@ -301,6 +305,26 @@ func normalizeAccessKeyRecord(record AccessKeyRecord) AccessKeyRecord {
 		record.AccountID = record.SubjectID
 	}
 	return record
+}
+
+func normalizeAccessKeyValues(values []string, lower bool) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			continue
+		}
+		if lower {
+			v = strings.ToLower(v)
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 func (c *Client) RevokeAccessKey(ctx context.Context, name string) error {

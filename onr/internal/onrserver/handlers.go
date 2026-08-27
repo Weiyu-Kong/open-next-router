@@ -41,9 +41,6 @@ func makeHandler(cfg *config.Config, st *state, pclient *proxy.Client, api strin
 		if mo := auth.TokenModelOverride(c); mo != "" {
 			model = mo
 		}
-		if !enforceBillingBalance(cfg, billing, c, requestIDHeaderKey) {
-			return
-		}
 
 		if rec := trafficdump.FromContext(c); rec != nil && rec.MaxBytes() > 0 {
 			ct := ""
@@ -70,6 +67,13 @@ func makeHandler(cfg *config.Config, st *state, pclient *proxy.Client, api strin
 				"provider_not_selected",
 				"no provider selected: set x-onr-provider or configure models.yaml",
 			)
+			return
+		}
+		principal, _ := auth.PrincipalFromContext(c)
+		if !authorizeAccessKeyRequest(c, requestIDHeaderKey, principal, provider, model) {
+			return
+		}
+		if !enforceBillingBalance(cfg, billing, c, requestIDHeaderKey) {
 			return
 		}
 
@@ -123,6 +127,22 @@ func makeHandler(cfg *config.Config, st *state, pclient *proxy.Client, api strin
 
 		_ = cfg
 	}
+}
+
+func authorizeAccessKeyRequest(c *gin.Context, requestIDHeaderKey string, principal auth.AuthPrincipal, provider string, model string) bool {
+	if !principal.AllowsProvider(provider) {
+		writeOpenAIErrorWithStatus(c, requestIDHeaderKey, http.StatusForbidden, openAIInvalidRequestType, "provider_not_allowed", "provider "+provider+" is not allowed for this access key")
+		return false
+	}
+	if !principal.AllowsModel(model) {
+		msg := "model is not allowed for this access key"
+		if strings.TrimSpace(model) != "" {
+			msg = "model " + model + " is not allowed for this access key"
+		}
+		writeOpenAIErrorWithStatus(c, requestIDHeaderKey, http.StatusForbidden, openAIInvalidRequestType, "model_not_allowed", msg)
+		return false
+	}
+	return true
 }
 
 func inspectRequestBody(c *gin.Context, api string) ([]byte, bool, string, error) {
