@@ -46,6 +46,25 @@ func TestRouter_Basic(t *testing.T) {
 	}
 }
 
+func TestRouter_RouteForModel(t *testing.T) {
+	r := NewRouter(map[string]Route{
+		"gpt-4o-mini": {
+			Providers: []string{" openai "},
+			OwnedBy:   " standard-user ",
+		},
+	})
+	route, ok := r.RouteForModel(" gpt-4o-mini ")
+	if !ok {
+		t.Fatal("expected route")
+	}
+	if route.OwnedBy != "standard-user" {
+		t.Fatalf("owned_by=%q", route.OwnedBy)
+	}
+	if len(route.Providers) != 1 || route.Providers[0] != "openai" {
+		t.Fatalf("providers=%v", route.Providers)
+	}
+}
+
 func TestRouter_UnknownStrategyFallback(t *testing.T) {
 	r := NewRouter(map[string]Route{
 		"x": {

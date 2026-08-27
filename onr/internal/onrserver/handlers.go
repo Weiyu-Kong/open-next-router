@@ -73,6 +73,9 @@ func makeHandler(cfg *config.Config, st *state, pclient *proxy.Client, api strin
 		if !authorizeAccessKeyRequest(c, requestIDHeaderKey, principal, provider, model) {
 			return
 		}
+		if !authorizeRoutePolicyRequest(c, requestIDHeaderKey, st, principal, model, provider) {
+			return
+		}
 		if !enforceBillingBalance(cfg, billing, c, requestIDHeaderKey) {
 			return
 		}
@@ -143,6 +146,43 @@ func authorizeAccessKeyRequest(c *gin.Context, requestIDHeaderKey string, princi
 		return false
 	}
 	return true
+}
+
+func authorizeRoutePolicyRequest(c *gin.Context, requestIDHeaderKey string, st *state, principal auth.AuthPrincipal, model string, provider string) bool {
+	policyID := strings.TrimSpace(principal.RoutePolicyID)
+	if policyID == "" || st == nil {
+		return true
+	}
+	router := st.ModelRouter()
+	if router == nil {
+		return true
+	}
+	route, ok := router.RouteForModel(model)
+	if !ok {
+		return true
+	}
+	if route.OwnedBy != "" && !strings.EqualFold(route.OwnedBy, policyID) {
+		writeOpenAIErrorWithStatus(c, requestIDHeaderKey, http.StatusForbidden, openAIInvalidRequestType, "route_policy_not_allowed", "model "+model+" is not allowed for route policy "+policyID)
+		return false
+	}
+	if len(route.Providers) > 0 && !providerInRoute(route.Providers, provider) {
+		writeOpenAIErrorWithStatus(c, requestIDHeaderKey, http.StatusForbidden, openAIInvalidRequestType, "route_policy_provider_not_allowed", "provider "+provider+" is not allowed for model "+model+" under route policy "+policyID)
+		return false
+	}
+	return true
+}
+
+func providerInRoute(allowed []string, provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" {
+		return false
+	}
+	for _, p := range allowed {
+		if strings.ToLower(strings.TrimSpace(p)) == provider {
+			return true
+		}
+	}
+	return false
 }
 
 func inspectRequestBody(c *gin.Context, api string) ([]byte, bool, string, error) {

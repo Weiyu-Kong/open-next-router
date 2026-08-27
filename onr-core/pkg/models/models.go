@@ -61,6 +61,21 @@ func (r *Router) Models() []string {
 	return out
 }
 
+// RouteForModel returns the normalized route for a model, when configured.
+func (r *Router) RouteForModel(modelID string) (Route, bool) {
+	id := normalizeModelID(modelID)
+	if id == "" {
+		return Route{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rt, ok := r.routes[id]
+	if !ok {
+		return Route{}, false
+	}
+	return normalizeRoute(rt), true
+}
+
 // NextProvider requires a non-nil Router receiver.
 func (r *Router) NextProvider(modelID string) (string, bool) {
 	id := normalizeModelID(modelID)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/r9s-ai/open-next-router/onr-core/pkg/models"
 	"github.com/r9s-ai/open-next-router/onr/internal/auth"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 )
@@ -121,6 +122,84 @@ func TestMakeGeminiHandlerRejectsDisallowedModel(t *testing.T) {
 		t.Fatalf("decode body: %v", err)
 	}
 	if got := out["error"].(map[string]any)["code"]; got != "model_not_allowed" {
+		t.Fatalf("code=%v", got)
+	}
+}
+
+func TestMakeHandlerRejectsRoutePolicyMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(auth.MiddlewareWithResolver("", func(context.Context, string) (auth.AuthPrincipal, bool, error) {
+		return auth.AuthPrincipal{
+			AccessKeyID:      "key-a",
+			SubjectType:      "api_key",
+			SubjectID:        "key-a",
+			RoutePolicyID:    "standard-user",
+			AllowedProviders: []string{"openai"},
+		}, true, nil
+	}))
+	st := &state{}
+	st.SetModelRouter(models.NewRouter(map[string]models.Route{
+		"gpt-4o-mini": {
+			Providers: []string{"openai"},
+			OwnedBy:   "trusted-user",
+		},
+	}))
+	r.POST("/v1/chat/completions", makeHandler(&config.Config{}, st, nil, "chat.completions", "X-Onr-Request-Id", nil))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(`{"model":"gpt-4o-mini"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-onr-provider", "openai")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got := out["error"].(map[string]any)["code"]; got != "route_policy_not_allowed" {
+		t.Fatalf("code=%v", got)
+	}
+}
+
+func TestMakeGeminiHandlerRejectsRoutePolicyMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(auth.MiddlewareWithResolver("", func(context.Context, string) (auth.AuthPrincipal, bool, error) {
+		return auth.AuthPrincipal{
+			AccessKeyID:      "key-a",
+			SubjectType:      "api_key",
+			SubjectID:        "key-a",
+			RoutePolicyID:    "standard-user",
+			AllowedProviders: []string{"openai"},
+		}, true, nil
+	}))
+	st := &state{}
+	st.SetModelRouter(models.NewRouter(map[string]models.Route{
+		"gemini-2.0-flash": {
+			Providers: []string{"openai"},
+			OwnedBy:   "trusted-user",
+		},
+	}))
+	r.POST("/v1beta/models/*path", makeGeminiHandler(&config.Config{}, st, nil, "X-Onr-Request-Id", nil))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.0-flash:generateContent", bytes.NewReader([]byte(`{"contents":[]}`)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-onr-provider", "openai")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got := out["error"].(map[string]any)["code"]; got != "route_policy_not_allowed" {
 		t.Fatalf("code=%v", got)
 	}
 }

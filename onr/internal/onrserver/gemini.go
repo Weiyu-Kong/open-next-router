@@ -87,6 +87,9 @@ func makeGeminiHandler(cfg *config.Config, st *state, pclient *proxy.Client, req
 		if !authorizeAccessKeyRequest(c, requestIDHeaderKey, principal, provider, model) {
 			return
 		}
+		if !authorizeRoutePolicyRequest(c, requestIDHeaderKey, st, principal, model, provider) {
+			return
+		}
 		if !enforceBillingBalance(cfg, billing, c, requestIDHeaderKey) {
 			return
 		}
