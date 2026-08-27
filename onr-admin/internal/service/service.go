@@ -326,6 +326,13 @@ func (s *Service) QueryAccessKeyUsage(ctx context.Context, rec controlplane.Acce
 	}
 	return s.meterry.Query.UsageForProject(ctx, s.cfg.Meterry.ProjectID, types.UsageAnalyticsQueryRequest{BucketSize: in.BucketSize, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Metrics: in.Metrics, StartTime: in.StartTime, EndTime: in.EndTime, GroupBy: in.GroupBy, Measures: in.Measures, Limit: in.Limit})
 }
+
+func (s *Service) QueryAccessKeyEvents(ctx context.Context, rec controlplane.AccessKeyRecord, startTime, endTime int64, limit int) (*types.ListUsageEventLogsResponse, error) {
+	if s.meterry == nil {
+		return nil, fmt.Errorf("Meterry is not configured")
+	}
+	return s.meterry.Query.ListProjectUsageEvents(ctx, s.cfg.Meterry.ProjectID, types.ListUsageEventLogsRequest{SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, StartTime: startTime, EndTime: endTime, Limit: limit})
+}
 func (s *Service) RotateAccessKey(ctx context.Context, name string) (string, error) {
 	if s.cp == nil {
 		return "", fmt.Errorf("redis access-key management is disabled")

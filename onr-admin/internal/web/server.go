@@ -274,6 +274,7 @@ func (s *Server) Handler() http.Handler {
 	userAPI.HandleFunc("/api/user/balance", s.handleUserBalance)
 	userAPI.HandleFunc("/api/user/limits", s.handleUserLimits)
 	userAPI.HandleFunc("/api/user/usage", s.handleUserUsage)
+	userAPI.HandleFunc("/api/user/requests", s.handleUserRequests)
 	mux.Handle("/api/user/", userAPI)
 	mux.Handle("/api/", s.authMiddleware(api))
 	return mux
@@ -408,6 +409,40 @@ func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "bucket": r.URL.Query().Get("bucket"), "rows": response.Rows})
+}
+
+func (s *Server) handleUserRequests(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	record, ok := s.userSession(r)
+	if !ok {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
+		return
+	}
+	now := time.Now().Unix()
+	start := parseUnixQuery(r.URL.Query().Get("start"), now-24*60*60)
+	end := parseUnixQuery(r.URL.Query().Get("end"), now)
+	if start < now-31*24*60*60 || end <= start || end-start > 31*24*60*60 {
+		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "request range must be within 31 days"})
+		return
+	}
+	events, err := s.service.QueryAccessKeyEvents(r.Context(), record, start, end, 100)
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "request history unavailable"})
+		return
+	}
+	rows := make([]map[string]any, 0, len(events.UsageEvents))
+	for _, event := range events.UsageEvents {
+		rows = append(rows, map[string]any{
+			"occurred_at": event.OccurredAt,
+			"request_id":  event.ExternalEventID,
+			"model":       event.Labels["model"],
+			"metrics":     event.Metrics,
+		})
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "requests": rows})
 }
 
 func parseUnixQuery(value string, fallback int64) int64 {

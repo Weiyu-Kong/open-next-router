@@ -365,10 +365,11 @@ identifier as the authorization source.
   - Normalize Meterry errors and eventual-consistency state for the portal.
 - [ ] Step 9: add user-facing read APIs.
   - Added `/api/user/balance`, `/api/user/limits`, and `/api/user/usage`.
+  - Added `/api/user/requests` with a bounded time range and a deliberately reduced response shape.
   - Balance and limits are read from Meterry through the server-side Access Key account/subject mapping.
   - Usage queries support hour/day/week buckets, a bounded 31-day range, and model grouping.
   - User read endpoints use the authenticated session record and do not accept caller-supplied account or subject identifiers.
-  - Remaining in this step: production integration tests against Meterry and user-facing bill/request-detail endpoints.
+  - Remaining in this step: production integration tests against Meterry and user-facing bill detail endpoints.
   - Add authenticated endpoints for profile, balance, limits, usage summary, time series, and usage details.
   - Derive `account_id`, `subject_type`, and `subject_id` from the authenticated Access Key record.
   - Reject attempts to query another account, subject, or Access Key.
@@ -383,7 +384,8 @@ identifier as the authorization source.
   - Added `/user` with Access Key login and logout screens.
   - Added current balance display and hourly/daily/weekly usage selector.
   - Added a responsive model usage view backed by the authenticated user APIs.
-  - Provider and request-detail views remain pending until the corresponding server read APIs are added.
+  - Added a server-side request history API; provider, URL, and internal-key fields are excluded from its user response.
+  - Provider breakdown and richer bill detail remain pending until the corresponding server read APIs are added.
   - Keep admin operations and provider configuration out of the user portal.
 - [ ] Step 12: verify the complete user journey.
   - Provision an Access Key with an initial credit.
