@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/r9s-ai/open-next-router/onr/internal/auth"
 	"github.com/r9s-ai/open-next-router/onr/internal/meterry"
 	"github.com/r9s-ai/open-next-router/onr/internal/proxy"
 	"github.com/r9s-ai/open-next-router/pkg/config"
@@ -23,7 +24,17 @@ func enqueueBillingEvent(cfg *config.Config, sink *meterry.Client, c *gin.Contex
 	if rid == "" {
 		rid = strings.TrimSpace(c.GetString("X-Request-Id"))
 	}
-	subjectID := strings.TrimSpace(c.GetString("onr.auth_subject_id"))
+	principal, _ := auth.PrincipalFromContext(c)
+	accessKeyID := strings.TrimSpace(principal.AccessKeyID)
+	subjectType := strings.TrimSpace(principal.SubjectType)
+	if subjectType == "" {
+		subjectType = strings.TrimSpace(cfg.Meterry.SubjectType)
+	}
+	subjectID := strings.TrimSpace(principal.SubjectID)
+	if subjectID == "" {
+		// Keep compatibility with callers/tests that set the legacy context key.
+		subjectID = strings.TrimSpace(c.GetString("onr.auth_subject_id"))
+	}
 	if subjectID == "" {
 		subjectID = strings.TrimSpace(cfg.Meterry.FallbackSubjectID)
 	}
@@ -43,10 +54,11 @@ func enqueueBillingEvent(cfg *config.Config, sink *meterry.Client, c *gin.Contex
 		res.Status,
 		res.UsageStage,
 		res.Usage,
-		cfg.Meterry.SubjectType,
+		subjectType,
 		subjectID,
 		appname,
 		pricingHints(res.Cost),
+		accessKeyID,
 	)
 	if err := sink.Enqueue(event); err != nil {
 		// Billing is deliberately best-effort for the request path. The sink owns
@@ -59,11 +71,19 @@ func enforceBillingBalance(cfg *config.Config, sink *meterry.Client, c *gin.Cont
 	if cfg == nil || sink == nil || !cfg.Meterry.BalanceEnforcement.Enabled || !sink.BalanceEnabled() || c == nil {
 		return true
 	}
-	subjectID := strings.TrimSpace(c.GetString("onr.auth_subject_id"))
+	principal, _ := auth.PrincipalFromContext(c)
+	subjectType := strings.TrimSpace(principal.SubjectType)
+	if subjectType == "" {
+		subjectType = strings.TrimSpace(cfg.Meterry.SubjectType)
+	}
+	subjectID := strings.TrimSpace(principal.SubjectID)
+	if subjectID == "" {
+		// Keep compatibility with callers/tests that set the legacy context key.
+		subjectID = strings.TrimSpace(c.GetString("onr.auth_subject_id"))
+	}
 	if subjectID == "" {
 		return true
 	}
-	subjectType := strings.TrimSpace(cfg.Meterry.SubjectType)
 	allowed, err := sink.CheckBalance(requestContext(c), subjectType, subjectID)
 	if err != nil {
 		if strings.EqualFold(strings.TrimSpace(cfg.Meterry.BalanceEnforcement.FailureMode), "open") {

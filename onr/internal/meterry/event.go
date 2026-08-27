@@ -19,13 +19,14 @@ type Event struct {
 	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
-func NewEvent(requestID string, provider string, api string, model string, stream bool, status int, usageStage string, usage map[string]any, subjectType string, subjectID string, appname string, pricingHints map[string]any) Event {
+func NewEvent(requestID string, provider string, api string, model string, stream bool, status int, usageStage string, usage map[string]any, subjectType string, subjectID string, appname string, pricingHints map[string]any, accessKeyID string) Event {
 	rid := strings.TrimSpace(requestID)
 	provider = strings.TrimSpace(provider)
 	api = strings.TrimSpace(api)
 	model = strings.TrimSpace(model)
 	subjectType = strings.TrimSpace(subjectType)
 	subjectID = strings.TrimSpace(subjectID)
+	accessKeyID = strings.TrimSpace(accessKeyID)
 	usage = normalizeUsageAliases(usage)
 	raw := map[string]any{
 		"provider":    provider,
@@ -40,6 +41,9 @@ func NewEvent(requestID string, provider string, api string, model string, strea
 			"subject_id":   subjectID,
 			"request_id":   rid,
 		},
+	}
+	if accessKeyID != "" {
+		raw["meta"].(map[string]any)["access_key_id"] = accessKeyID
 	}
 	if appname = strings.TrimSpace(appname); appname != "" {
 		raw["meta"].(map[string]any)["appname"] = appname

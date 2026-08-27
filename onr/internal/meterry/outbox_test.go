@@ -11,8 +11,8 @@ func TestOutboxAppendFirstAck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	one := NewEvent("rid_1", "openai", "chat.completions", "m", false, 200, "upstream", nil, "api_key", "k", "", nil)
-	two := NewEvent("rid_2", "openai", "chat.completions", "m", false, 200, "upstream", nil, "api_key", "k", "", nil)
+	one := NewEvent("rid_1", "openai", "chat.completions", "m", false, 200, "upstream", nil, "api_key", "k", "", nil, "")
+	two := NewEvent("rid_2", "openai", "chat.completions", "m", false, 200, "upstream", nil, "api_key", "k", "", nil, "")
 	if err := o.append(one); err != nil {
 		t.Fatal(err)
 	}

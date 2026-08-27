@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/r9s-ai/open-next-router/onr/internal/auth"
 	"github.com/r9s-ai/open-next-router/onr/internal/meterry"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 )
@@ -95,6 +96,55 @@ func TestEnforceBillingBalanceFailureMode(t *testing.T) {
 				t.Fatalf("status=%d want=%d", rec.Code, tc.status)
 			}
 		})
+	}
+}
+
+func TestEnforceBillingBalanceUsesPrincipalSubject(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	requests := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"balance":"1"}`))
+	}))
+	defer srv.Close()
+	c, err := meterry.New(meterry.Config{
+		Enabled:          true,
+		BaseURL:          srv.URL,
+		ProjectID:        "proj",
+		APIKey:           "secret",
+		ExtractorRuleSet: "ers",
+		OutboxDir:        t.TempDir(),
+		BalanceEnabled:   true,
+		BalanceCurrency:   "USD",
+		BalanceTimeout:   time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	cfg := &config.Config{}
+	cfg.Meterry.Enabled = true
+	cfg.Meterry.SubjectType = "api_key"
+	cfg.Meterry.BalanceEnforcement.Enabled = true
+	cfg.Meterry.BalanceEnforcement.FailureMode = "closed"
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("onr.auth_principal", auth.AuthPrincipal{
+		AccessKeyID: "key-1",
+		SubjectType: "account",
+		SubjectID:   "account-1",
+	})
+	ctx.Set("onr.auth_subject_id", "legacy-key-name")
+
+	if !enforceBillingBalance(cfg, c, ctx, "X-Onr-Request-Id") {
+		t.Fatal("expected request to be allowed")
+	}
+	query := <-requests
+	if !bytes.Contains([]byte(query), []byte("subject_type=account")) || !bytes.Contains([]byte(query), []byte("subject_id=account-1")) {
+		t.Fatalf("unexpected balance query: %s", query)
 	}
 }
 

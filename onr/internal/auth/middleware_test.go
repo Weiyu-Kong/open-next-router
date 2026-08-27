@@ -14,8 +14,8 @@ import (
 func TestMiddlewareWithResolverUnavailable(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(MiddlewareWithResolver("", func(context.Context, string) (string, bool, error) {
-		return "", false, errors.New("redis down")
+	r.Use(MiddlewareWithResolver("", func(context.Context, string) (AuthPrincipal, bool, error) {
+		return AuthPrincipal{}, false, errors.New("redis down")
 	}))
 	r.GET("/ok", func(c *gin.Context) { c.String(200, "ok") })
 	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
@@ -23,6 +23,42 @@ func TestMiddlewareWithResolverUnavailable(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestMiddlewareWithResolverPropagatesPrincipal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(MiddlewareWithResolver("", func(context.Context, string) (AuthPrincipal, bool, error) {
+		return AuthPrincipal{
+			AccessKeyID: "key-record",
+			SubjectType: "account",
+			SubjectID:   "acct-1",
+		}, true, nil
+	}))
+	r.GET("/ok", func(c *gin.Context) {
+		principal, ok := PrincipalFromContext(c)
+		if !ok {
+			c.String(http.StatusInternalServerError, "principal missing")
+			return
+		}
+		if principal.AccessKeyID != "key-record" || principal.SubjectType != "account" || principal.SubjectID != "acct-1" {
+			c.String(http.StatusInternalServerError, "principal=%+v", principal)
+			return
+		}
+		if AccessKeyID(c) != "key-record" || SubjectType(c) != "account" || SubjectID(c) != "acct-1" {
+			c.String(http.StatusInternalServerError, "getter mismatch")
+			return
+		}
+		c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
+	req.Header.Set("Authorization", "Bearer ak-1")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
 }
@@ -41,6 +77,10 @@ func TestMiddleware_TokenKey_AccessKey(t *testing.T) {
 	r.GET("/ok", func(c *gin.Context) {
 		if got := c.GetString("onr.auth_subject_id"); got != "client1" {
 			c.String(http.StatusInternalServerError, "subject=%s", got)
+			return
+		}
+		if AccessKeyID(c) != "client1" || SubjectID(c) != "client1" {
+			c.String(http.StatusInternalServerError, "legacy principal missing")
 			return
 		}
 		c.String(200, "ok")

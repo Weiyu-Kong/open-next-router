@@ -88,28 +88,44 @@ func NewRouter(
 	secured := r.Group("/")
 	secured.Use(auth.MiddlewareWithResolver(
 		cfg.Auth.APIKey,
-		func(ctx context.Context, accessKey string) (string, bool, error) {
+		func(ctx context.Context, accessKey string) (auth.AuthPrincipal, bool, error) {
 			if st.redis != nil && cfg.Redis.AccessKeyMode != "file_only" {
 				record, err := st.redis.LookupAccessKey(ctx, accessKey)
 				if err != nil {
-					return "", false, err
+					return auth.AuthPrincipal{}, false, err
 				}
 				if record != nil {
-					return strings.TrimSpace(record.Name), true, nil
+					subjectType := strings.TrimSpace(record.SubjectType)
+					if subjectType == "" {
+						subjectType = strings.TrimSpace(cfg.Meterry.SubjectType)
+					}
+					subjectID := strings.TrimSpace(record.SubjectID)
+					if subjectID == "" {
+						// Legacy Redis records used the access key name as the subject.
+						subjectID = strings.TrimSpace(record.Name)
+					}
+					return auth.AuthPrincipal{
+						AccessKeyID: strings.TrimSpace(record.Name),
+						SubjectType: subjectType,
+						SubjectID:   subjectID,
+					}, true, nil
 				}
 				if cfg.Redis.AccessKeyMode == "redis_only" {
-					return "", false, nil
+					return auth.AuthPrincipal{}, false, nil
 				}
 			}
 			ks := st.Keys()
 			if ks == nil {
-				return "", false, nil
+				return auth.AuthPrincipal{}, false, nil
 			}
 			ak, ok := ks.MatchAccessKey(accessKey)
 			if !ok || ak == nil {
-				return "", false, nil
+				return auth.AuthPrincipal{}, false, nil
 			}
-			return strings.TrimSpace(ak.Name), true, nil
+			return auth.AuthPrincipal{
+				AccessKeyID: strings.TrimSpace(ak.Name),
+				SubjectID:   strings.TrimSpace(ak.Name),
+			}, true, nil
 		},
 		auth.TokenKeyOptions{
 			AllowBYOKWithoutK: cfg.Auth.TokenKey.AllowBYOKWithoutK,

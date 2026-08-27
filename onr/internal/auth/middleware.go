@@ -10,7 +10,23 @@ import (
 )
 
 type AccessKeyMatcher func(accessKey string) (name string, ok bool)
-type AccessKeyResolver func(ctx context.Context, accessKey string) (name string, ok bool, err error)
+type AccessKeyResolver func(ctx context.Context, accessKey string) (principal AuthPrincipal, ok bool, err error)
+
+// AuthPrincipal identifies the authenticated caller and its billing subject.
+// SubjectType and SubjectID are intentionally separate from AccessKeyID because
+// multiple access keys may belong to the same billing subject.
+type AuthPrincipal struct {
+	AccessKeyID string
+	SubjectType string
+	SubjectID   string
+}
+
+const (
+	ctxAuthPrincipal    = "onr.auth_principal"
+	ctxAuthAccessKeyID  = "onr.auth_access_key_id"
+	ctxAuthSubjectType  = "onr.auth_subject_type"
+	ctxAuthSubjectID    = "onr.auth_subject_id"
+)
 
 type TokenKeyOptions struct {
 	AllowBYOKWithoutK bool
@@ -19,9 +35,12 @@ type TokenKeyOptions struct {
 func Middleware(masterKey string, matchAccessKey AccessKeyMatcher, tokenOpts ...TokenKeyOptions) gin.HandlerFunc {
 	var resolver AccessKeyResolver
 	if matchAccessKey != nil {
-		resolver = func(_ context.Context, accessKey string) (string, bool, error) {
+		resolver = func(_ context.Context, accessKey string) (AuthPrincipal, bool, error) {
 			name, ok := matchAccessKey(accessKey)
-			return name, ok, nil
+			return AuthPrincipal{
+				AccessKeyID: strings.TrimSpace(name),
+				SubjectID:   strings.TrimSpace(name),
+			}, ok, nil
 		}
 	}
 	return MiddlewareWithResolver(masterKey, resolver, tokenOpts...)
@@ -51,7 +70,7 @@ func MiddlewareWithResolver(masterKey string, resolveAccessKey AccessKeyResolver
 			return
 		}
 		if resolveAccessKey != nil {
-			if name, ok, err := resolveAccessKey(c.Request.Context(), got); err != nil {
+			if principal, ok, err := resolveAccessKey(c.Request.Context(), got); err != nil {
 				c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": gin.H{
 					"message": "authentication service is unavailable",
 					"type":    "auth_error",
@@ -59,9 +78,7 @@ func MiddlewareWithResolver(masterKey string, resolveAccessKey AccessKeyResolver
 				}})
 				return
 			} else if ok {
-				if strings.TrimSpace(name) != "" {
-					c.Set("onr.auth_subject_id", strings.TrimSpace(name))
-				}
+				setPrincipal(c, principal)
 				c.Next()
 				return
 			}
@@ -102,10 +119,11 @@ func authenticateToken(c *gin.Context, got, expected string, resolver AccessKeyR
 	}
 	var err error
 	ok := false
+	var principal AuthPrincipal
 	if strings.TrimSpace(accessKey) != "" {
 		ok = expected != "" && subtle.ConstantTimeCompare([]byte(accessKey), []byte(expected)) == 1
 		if !ok && resolver != nil {
-			_, ok, err = resolver(c.Request.Context(), accessKey)
+			principal, ok, err = resolver(c.Request.Context(), accessKey)
 			if err != nil {
 				return false, err
 			}
@@ -116,14 +134,8 @@ func authenticateToken(c *gin.Context, got, expected string, resolver AccessKeyR
 	if !ok {
 		return false, nil
 	}
-	if strings.TrimSpace(accessKey) != "" && resolver != nil {
-		name, matched, err := resolver(c.Request.Context(), accessKey)
-		if err != nil {
-			return false, err
-		}
-		if matched && strings.TrimSpace(name) != "" {
-			c.Set("onr.auth_subject_id", strings.TrimSpace(name))
-		}
+	if ok && principal != (AuthPrincipal{}) {
+		setPrincipal(c, principal)
 	}
 	if claims.Provider != "" {
 		c.Set(ctxTokenProvider, claims.Provider)
@@ -136,6 +148,62 @@ func authenticateToken(c *gin.Context, got, expected string, resolver AccessKeyR
 	}
 	c.Set(ctxTokenMode, string(claims.Mode))
 	return true, nil
+}
+
+func setPrincipal(c *gin.Context, principal AuthPrincipal) {
+	if c == nil {
+		return
+	}
+	principal.AccessKeyID = strings.TrimSpace(principal.AccessKeyID)
+	principal.SubjectType = strings.TrimSpace(principal.SubjectType)
+	principal.SubjectID = strings.TrimSpace(principal.SubjectID)
+	c.Set(ctxAuthPrincipal, principal)
+	if principal.AccessKeyID != "" {
+		c.Set(ctxAuthAccessKeyID, principal.AccessKeyID)
+	}
+	if principal.SubjectType != "" {
+		c.Set(ctxAuthSubjectType, principal.SubjectType)
+	}
+	if principal.SubjectID != "" {
+		c.Set(ctxAuthSubjectID, principal.SubjectID)
+	}
+}
+
+// PrincipalFromContext returns the authenticated principal, when one was set.
+func PrincipalFromContext(c *gin.Context) (AuthPrincipal, bool) {
+	if c == nil {
+		return AuthPrincipal{}, false
+	}
+	value, ok := c.Get(ctxAuthPrincipal)
+	if !ok {
+		return AuthPrincipal{}, false
+	}
+	principal, ok := value.(AuthPrincipal)
+	return principal, ok
+}
+
+// AccessKeyID returns the non-secret access key identifier from the request context.
+func AccessKeyID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.GetString(ctxAuthAccessKeyID))
+}
+
+// SubjectType returns the authenticated billing subject type from the request context.
+func SubjectType(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.GetString(ctxAuthSubjectType))
+}
+
+// SubjectID returns the authenticated billing subject ID from the request context.
+func SubjectID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.GetString(ctxAuthSubjectID))
 }
 
 func parseToken(got string, allowBYOKWithoutK bool) (*TokenClaims, string) {

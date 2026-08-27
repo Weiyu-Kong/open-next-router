@@ -36,7 +36,7 @@ func TestClientSendsQueuedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := NewEvent("rid_1", "openai", "chat.completions", "m", false, 200, "upstream", nil, "api_key", "k", "", nil)
+	e := NewEvent("rid_1", "openai", "chat.completions", "m", false, 200, "upstream", nil, "api_key", "k", "", nil, "")
 	if err := c.Enqueue(e); err != nil {
 		t.Fatal(err)
 	}
