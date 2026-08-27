@@ -152,6 +152,7 @@ func (c *Client) key(parts ...string) string {
 
 func (c *Client) accessKeyRecordKey(name string) string { return c.key("access_key", name) }
 func (c *Client) accessKeyIndexKey() string             { return c.key("access_key", "index") }
+func (c *Client) accessKeyAccountIndexKey() string      { return c.key("access_key", "account_index") }
 func (c *Client) subjectKey(subjectType, subjectID string) string {
 	return c.key("subject", subjectType, subjectID)
 }
@@ -241,6 +242,11 @@ func (c *Client) PutAccessKey(ctx context.Context, record AccessKeyRecord) error
 		pipe := c.rdb.TxPipeline()
 		pipe.Set(ctx, c.accessKeyRecordKey(record.Name), raw, 0)
 		pipe.HSet(ctx, c.accessKeyIndexKey(), record.SecretHash, record.Name)
+		if record.Status == "active" {
+			pipe.HSet(ctx, c.accessKeyAccountIndexKey(), record.AccountID, record.Name)
+		} else {
+			pipe.HDel(ctx, c.accessKeyAccountIndexKey(), record.AccountID)
+		}
 		_, err := pipe.Exec(ctx)
 		return err
 	})
@@ -264,15 +270,17 @@ func (c *Client) CreateAccessKey(ctx context.Context, record AccessKeyRecord) er
 	const createScript = `
 if redis.call('exists', KEYS[1]) == 1 then return 0 end
 if redis.call('hexists', KEYS[2], ARGV[2]) == 1 then return -1 end
+if ARGV[4] == 'active' and redis.call('hexists', KEYS[3], ARGV[5]) == 1 then return -2 end
 redis.call('set', KEYS[1], ARGV[1])
 redis.call('hset', KEYS[2], ARGV[2], ARGV[3])
+if ARGV[4] == 'active' then redis.call('hset', KEYS[3], ARGV[5], ARGV[3]) end
 return 1`
 	var result int64
 	err = c.withTimeout(ctx, func(ctx context.Context) error {
 		var err error
 		result, err = c.rdb.Eval(ctx, createScript,
-			[]string{c.accessKeyRecordKey(record.Name), c.accessKeyIndexKey()},
-			raw, record.SecretHash, record.Name,
+			[]string{c.accessKeyRecordKey(record.Name), c.accessKeyIndexKey(), c.accessKeyAccountIndexKey()},
+			raw, record.SecretHash, record.Name, record.Status, record.AccountID,
 		).Int64()
 		return err
 	})
@@ -284,6 +292,8 @@ return 1`
 		return fmt.Errorf("access key %q already exists", record.Name)
 	case -1:
 		return fmt.Errorf("access key secret is already associated with another key")
+	case -2:
+		return fmt.Errorf("an active access key already exists for account %q", record.AccountID)
 	case 1:
 		return nil
 	default:

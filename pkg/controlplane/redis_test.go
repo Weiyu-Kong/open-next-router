@@ -117,6 +117,25 @@ func TestAccessKeyRecordDefaultsAccountAndSubjectIDs(t *testing.T) {
 	}
 }
 
+func TestActiveAccessKeyIsUniquePerAccount(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	secretA, _ := NewAccessKeySecret()
+	secretB, _ := NewAccessKeySecret()
+	if err := c.CreateAccessKey(ctx, AccessKeyRecord{Name: "key-a", SecretHash: c.HashAccessKey(secretA), Status: "active", SubjectType: "api_key", SubjectID: "subject-a", AccountID: "account-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CreateAccessKey(ctx, AccessKeyRecord{Name: "key-b", SecretHash: c.HashAccessKey(secretB), Status: "active", SubjectType: "api_key", SubjectID: "subject-b", AccountID: "account-a"}); err == nil {
+		t.Fatal("expected duplicate active account error")
+	}
+	if err := c.RevokeAccessKey(ctx, "key-a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CreateAccessKey(ctx, AccessKeyRecord{Name: "key-b", SecretHash: c.HashAccessKey(secretB), Status: "active", SubjectType: "api_key", SubjectID: "subject-b", AccountID: "account-a"}); err != nil {
+		t.Fatalf("create after revoke: %v", err)
+	}
+}
+
 func TestGetAccessKeyRecordNormalizesLegacyJSON(t *testing.T) {
 	c := newTestClient(t)
 	raw, err := json.Marshal(AccessKeyRecord{
