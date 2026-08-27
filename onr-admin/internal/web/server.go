@@ -841,18 +841,20 @@ func (s *Server) handleAdminAccessKeys(w http.ResponseWriter, r *http.Request) {
 
 func safeAccessKey(v controlplane.AccessKeyRecord) map[string]any {
 	return map[string]any{
-		"name":              v.Name,
-		"status":            v.Status,
-		"subject_type":      v.SubjectType,
-		"subject_id":        v.SubjectID,
-		"account_id":        v.AccountID,
-		"route_policy_id":   v.RoutePolicyID,
-		"allowed_providers": v.AllowedProviders,
-		"allowed_models":    v.AllowedModels,
-		"created_at":        v.CreatedAt,
-		"expires_at":        v.ExpiresAt,
-		"version":           v.Version,
-		"metadata":          v.Metadata,
+		"name":               v.Name,
+		"status":             v.Status,
+		"subject_type":       v.SubjectType,
+		"subject_id":         v.SubjectID,
+		"account_id":         v.AccountID,
+		"meterry_account_id": v.MeterryAccountID,
+		"provisioning":       v.Provisioning,
+		"route_policy_id":    v.RoutePolicyID,
+		"allowed_providers":  v.AllowedProviders,
+		"allowed_models":     v.AllowedModels,
+		"created_at":         v.CreatedAt,
+		"expires_at":         v.ExpiresAt,
+		"version":            v.Version,
+		"metadata":           v.Metadata,
 	}
 }
 

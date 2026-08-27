@@ -109,6 +109,7 @@ type MeterryConfig struct {
 	OnlyBillableSuccess *bool                `yaml:"only_billable_success"`
 	SubjectType         string               `yaml:"subject_type"`
 	FallbackSubjectID   string               `yaml:"fallback_subject_id"`
+	InitialCredit       string               `yaml:"initial_credit"`
 	BalanceEnforcement  MeterryBalanceConfig `yaml:"balance_enforcement"`
 }
 

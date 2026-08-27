@@ -55,6 +55,8 @@ meterry:
   project_id: ""
   api_key: ""
   extractor_rule_set_id: "ers_onr_gateway"
+  # Decimal amount credited once when an Access Key is provisioned.
+  initial_credit: "0"
   outbox_dir: "./run/meterry"
   request_timeout_ms: 3000
   retry_interval_ms: 1000

@@ -49,6 +49,8 @@ type AccessKeyRecord struct {
 	SubjectType      string            `json:"subject_type"`
 	SubjectID        string            `json:"subject_id"`
 	AccountID        string            `json:"account_id,omitempty"`
+	MeterryAccountID string            `json:"meterry_account_id,omitempty"`
+	Provisioning     string            `json:"provisioning,omitempty"`
 	RoutePolicyID    string            `json:"route_policy_id,omitempty"`
 	AllowedProviders []string          `json:"allowed_providers,omitempty"`
 	AllowedModels    []string          `json:"allowed_models,omitempty"`

@@ -8,9 +8,12 @@ import (
 	"strings"
 	"time"
 
+	sdk "github.com/meterry-com/meterry-go"
+	"github.com/meterry-com/meterry-go/pkg/types"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/keystore"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
+	"github.com/shopspring/decimal"
 )
 
 type CreateAccessKeyInput struct {
@@ -40,8 +43,9 @@ type Overview struct {
 }
 
 type Service struct {
-	cfg *config.Config
-	cp  *controlplane.Client
+	cfg     *config.Config
+	cp      *controlplane.Client
+	meterry *sdk.Client
 }
 
 func New(cfgPath string) (*Service, error) {
@@ -50,6 +54,12 @@ func New(cfgPath string) (*Service, error) {
 		return nil, err
 	}
 	s := &Service{cfg: cfg}
+	if cfg.Meterry.Enabled && strings.TrimSpace(cfg.Meterry.BaseURL) != "" && strings.TrimSpace(cfg.Meterry.APIKey) != "" {
+		s.meterry, err = sdk.NewClient(sdk.Config{BaseURL: cfg.Meterry.BaseURL, APIKey: cfg.Meterry.APIKey, HTTPClient: &http.Client{Timeout: 10 * time.Second}})
+		if err != nil {
+			return nil, fmt.Errorf("init Meterry client: %w", err)
+		}
+	}
 	if !cfg.Redis.Enabled {
 		return s, nil
 	}
@@ -124,11 +134,78 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		AllowedModels:    parseCommaList(in.AllowedModels, false),
 		ExpiresAt:        in.ExpiresAt,
 		Metadata:         in.Metadata,
+		Provisioning:     "pending",
+	}
+	if s.meterry != nil {
+		accountID, err := s.provisionMeterry(ctx, rec)
+		if err != nil {
+			return "", err
+		}
+		rec.MeterryAccountID = accountID
+		rec.AccountID = accountID
+		rec.Provisioning = "ready"
 	}
 	if e = s.cp.CreateAccessKey(ctx, rec); e != nil {
 		return "", e
 	}
 	return secret, nil
+}
+
+func (s *Service) provisionMeterry(ctx context.Context, rec controlplane.AccessKeyRecord) (string, error) {
+	if s.meterry == nil {
+		return "", fmt.Errorf("Meterry is not configured")
+	}
+	name := "onr-access-key:" + strings.TrimSpace(rec.Name)
+	accounts, err := s.meterry.Manager.ListAccountsForProject(ctx, s.cfg.Meterry.ProjectID)
+	if err != nil {
+		return "", fmt.Errorf("list Meterry accounts: %w", err)
+	}
+	var account *types.Account
+	for i := range accounts {
+		if accounts[i].Name == name {
+			account = &accounts[i]
+			break
+		}
+	}
+	if account == nil {
+		account, err = s.meterry.Manager.CreateAccountForProject(ctx, s.cfg.Meterry.ProjectID, types.CreateAccountRequest{Name: name, PrimarySubjectType: rec.SubjectType, PrimarySubjectID: rec.SubjectID})
+		if err != nil {
+			return "", fmt.Errorf("create Meterry account: %w", err)
+		}
+	}
+	accountID := strings.TrimSpace(account.ID)
+	if accountID == "" {
+		return "", fmt.Errorf("Meterry account has no id")
+	}
+	if _, err := s.meterry.Manager.BindSubjectForProject(ctx, s.cfg.Meterry.ProjectID, types.BindAccountSubjectRequest{AccountID: accountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID}); err != nil {
+		return "", fmt.Errorf("bind Meterry subject: %w", err)
+	}
+	currency := strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
+	if currency == "" {
+		currency = "USD"
+	}
+	wallets, err := s.meterry.Manager.ListWalletsForProject(ctx, s.cfg.Meterry.ProjectID, sdk.ListWalletsRequest{AccountID: accountID})
+	if err != nil {
+		return "", fmt.Errorf("list Meterry wallets: %w", err)
+	}
+	if len(wallets) == 0 {
+		if _, err := s.meterry.Manager.CreateWalletForProject(ctx, s.cfg.Meterry.ProjectID, types.CreateWalletRequest{AccountID: accountID, Currency: currency}); err != nil {
+			return "", fmt.Errorf("create Meterry wallet: %w", err)
+		}
+	}
+	amountText := strings.TrimSpace(s.cfg.Meterry.InitialCredit)
+	if amountText == "" || amountText == "0" {
+		return accountID, nil
+	}
+	amount, err := decimal.NewFromString(amountText)
+	if err != nil || amount.IsNegative() {
+		return "", fmt.Errorf("invalid Meterry initial_credit")
+	}
+	_, err = s.meterry.Manager.CreditWalletForProject(ctx, s.cfg.Meterry.ProjectID, types.CreditWalletRequest{AccountID: accountID, Currency: currency, Amount: amount, SourceType: "onr_access_key_initial_credit", SourceID: rec.Name, IdempotencyKey: "onr:initial-credit:" + rec.Name})
+	if err != nil {
+		return "", fmt.Errorf("credit Meterry initial balance: %w", err)
+	}
+	return accountID, nil
 }
 func (s *Service) RevokeAccessKey(ctx context.Context, name string) error {
 	if s.cp == nil {
