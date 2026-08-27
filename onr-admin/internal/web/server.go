@@ -267,6 +267,9 @@ func (s *Server) Handler() http.Handler {
 	userAPI.HandleFunc("/api/user/login", s.handleUserLogin)
 	userAPI.HandleFunc("/api/user/logout", s.handleUserLogout)
 	userAPI.HandleFunc("/api/user/me", s.handleUserMe)
+	userAPI.HandleFunc("/api/user/balance", s.handleUserBalance)
+	userAPI.HandleFunc("/api/user/limits", s.handleUserLimits)
+	userAPI.HandleFunc("/api/user/usage", s.handleUserUsage)
 	mux.Handle("/api/user/", userAPI)
 	mux.Handle("/api/", s.authMiddleware(api))
 	return mux
@@ -334,6 +337,98 @@ func (s *Server) handleUserMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "account": safeUserAccount(record)})
+}
+
+func (s *Server) handleUserBalance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	record, ok := s.userSession(r)
+	if !ok {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
+		return
+	}
+	snapshot, err := s.service.ReadAccessKeyBalance(r.Context(), record)
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "balance service unavailable"})
+		return
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "balance": snapshot})
+}
+
+func (s *Server) handleUserLimits(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	record, ok := s.userSession(r)
+	if !ok {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
+		return
+	}
+	snapshot, err := s.service.ReadAccessKeyLimits(r.Context(), record)
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "limits service unavailable"})
+		return
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "limits": snapshot})
+}
+
+func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	record, ok := s.userSession(r)
+	if !ok {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
+		return
+	}
+	now := time.Now().Unix()
+	start := parseUnixQuery(r.URL.Query().Get("start"), now-24*60*60)
+	end := parseUnixQuery(r.URL.Query().Get("end"), now)
+	if start < now-31*24*60*60 || end <= start || end-start > 31*24*60*60 {
+		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "usage range must be within 31 days"})
+		return
+	}
+	bucket, ok := userUsageBucket(r.URL.Query().Get("bucket"))
+	if !ok {
+		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bucket must be hour, day, or week"})
+		return
+	}
+	groupBy := []string{"bucket", "model"}
+	response, err := s.service.QueryAccessKeyUsage(r.Context(), record, adminservice.UserUsageQuery{BucketSize: bucket, StartTime: start, EndTime: end, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: groupBy, Measures: []string{"quantity"}, Limit: 1000})
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "usage service unavailable"})
+		return
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "bucket": r.URL.Query().Get("bucket"), "rows": response.Rows})
+}
+
+func parseUnixQuery(value string, fallback int64) int64 {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	var parsed int64
+	if _, err := fmt.Sscan(value, &parsed); err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func userUsageBucket(value string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "hour", "hours":
+		return "1h", true
+	case "day", "days":
+		return "1d", true
+	case "week", "weeks":
+		return "1w", true
+	default:
+		return "", false
+	}
 }
 
 func (s *Server) userSession(r *http.Request) (controlplane.AccessKeyRecord, bool) {

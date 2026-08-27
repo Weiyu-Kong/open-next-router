@@ -31,6 +31,16 @@ type WalletAdjustmentInput struct {
 	IdempotencyKey string
 }
 
+type UserUsageQuery struct {
+	BucketSize string
+	StartTime  int64
+	EndTime    int64
+	Metrics    []string
+	GroupBy    []string
+	Measures   []string
+	Limit      int
+}
+
 type MigrationReport struct {
 	Total, WouldMigrate, Migrated int
 	Conflicts, Skipped            []string
@@ -275,6 +285,46 @@ func (s *Service) AdjustAccessKeyBalance(ctx context.Context, name, operation st
 		return response.LedgerEntry, nil
 	}
 	return zero, fmt.Errorf("operation must be credit or debit")
+}
+
+func (s *Service) ReadAccessKeyBalance(ctx context.Context, rec controlplane.AccessKeyRecord) (*types.VirtualWalletAmountSnapshot, error) {
+	if s.meterry == nil {
+		return nil, fmt.Errorf("Meterry is not configured")
+	}
+	accountID := strings.TrimSpace(rec.MeterryAccountID)
+	if accountID == "" {
+		accountID = strings.TrimSpace(rec.AccountID)
+	}
+	if accountID == "" {
+		return nil, fmt.Errorf("access key has no Meterry account")
+	}
+	currency := strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
+	if currency == "" {
+		currency = "USD"
+	}
+	return s.meterry.Manager.ReadVirtualWalletAmountForProject(ctx, s.cfg.Meterry.ProjectID, types.ReadVirtualWalletRequest{AccountID: accountID, Currency: currency})
+}
+
+func (s *Service) ReadAccessKeyLimits(ctx context.Context, rec controlplane.AccessKeyRecord) (*types.VirtualWalletLimitsSnapshot, error) {
+	if s.meterry == nil {
+		return nil, fmt.Errorf("Meterry is not configured")
+	}
+	currency := strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
+	if currency == "" {
+		currency = "USD"
+	}
+	accountID := strings.TrimSpace(rec.MeterryAccountID)
+	if accountID == "" {
+		accountID = strings.TrimSpace(rec.AccountID)
+	}
+	return s.meterry.Manager.ReadVirtualWalletLimitsForProject(ctx, s.cfg.Meterry.ProjectID, types.ReadVirtualWalletRequest{AccountID: accountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Currency: currency})
+}
+
+func (s *Service) QueryAccessKeyUsage(ctx context.Context, rec controlplane.AccessKeyRecord, in UserUsageQuery) (*types.UsageAnalyticsQueryResponse, error) {
+	if s.meterry == nil {
+		return nil, fmt.Errorf("Meterry is not configured")
+	}
+	return s.meterry.Query.UsageForProject(ctx, s.cfg.Meterry.ProjectID, types.UsageAnalyticsQueryRequest{BucketSize: in.BucketSize, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Metrics: in.Metrics, StartTime: in.StartTime, EndTime: in.EndTime, GroupBy: in.GroupBy, Measures: in.Measures, Limit: in.Limit})
 }
 func (s *Service) RotateAccessKey(ctx context.Context, name string) (string, error) {
 	if s.cp == nil {

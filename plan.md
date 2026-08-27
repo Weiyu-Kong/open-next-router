@@ -364,6 +364,11 @@ identifier as the authorization source.
   - Normalize per-request usage, provider-period usage, and reconciliation corrections into one idempotent billing pipeline.
   - Normalize Meterry errors and eventual-consistency state for the portal.
 - [ ] Step 9: add user-facing read APIs.
+  - Added `/api/user/balance`, `/api/user/limits`, and `/api/user/usage`.
+  - Balance and limits are read from Meterry through the server-side Access Key account/subject mapping.
+  - Usage queries support hour/day/week buckets, a bounded 31-day range, and model grouping.
+  - User read endpoints use the authenticated session record and do not accept caller-supplied account or subject identifiers.
+  - Remaining in this step: production integration tests against Meterry and user-facing bill/request-detail endpoints.
   - Add authenticated endpoints for profile, balance, limits, usage summary, time series, and usage details.
   - Derive `account_id`, `subject_type`, and `subject_id` from the authenticated Access Key record.
   - Reject attempts to query another account, subject, or Access Key.

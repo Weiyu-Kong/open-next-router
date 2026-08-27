@@ -117,6 +117,22 @@ func TestUserMeRequiresSession(t *testing.T) {
 	}
 }
 
+func TestUserUsageBucket(t *testing.T) {
+	for _, tc := range []struct {
+		input, want string
+	}{
+		{"hour", "1h"}, {"day", "1d"}, {"week", "1w"}, {"", "1h"},
+	} {
+		got, ok := userUsageBucket(tc.input)
+		if !ok || got != tc.want {
+			t.Fatalf("userUsageBucket(%q)=(%q,%v), want %q,true", tc.input, got, ok, tc.want)
+		}
+	}
+	if _, ok := userUsageBucket("month"); ok {
+		t.Fatal("month must not be accepted")
+	}
+}
+
 func TestSaveProviderRequiresValidationSuccess(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(dir, 0o750); err != nil {
