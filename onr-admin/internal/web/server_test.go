@@ -133,6 +133,26 @@ func TestUserUsageBucket(t *testing.T) {
 	}
 }
 
+func TestUserPortalAssets(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.conf"), []byte(validOpenAIConf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := newServerWithOptions(dir, t.TempDir(), defaultAPIBaseURL, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+	for _, path := range []string{"/user", "/user.css", "/user.js"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		res := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(res, req)
+		if res.Code != http.StatusOK || res.Body.Len() == 0 {
+			t.Fatalf("%s status=%d body length=%d", path, res.Code, res.Body.Len())
+		}
+	}
+}
+
 func TestSaveProviderRequiresValidationSuccess(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(dir, 0o750); err != nil {

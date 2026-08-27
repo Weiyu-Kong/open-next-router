@@ -379,11 +379,11 @@ identifier as the authorization source.
   - Return request count, input tokens, output tokens, cache tokens when available, and charged amount.
   - Keep provider and internal-key dimensions available to administrators while suppressing them from the default user response.
   - Show data freshness and pending billing-event information because ingestion is asynchronous.
-- [ ] Step 11: add the Access Key user portal.
-  - Add Access Key login and logout screens.
-  - Add current balance and initial-credit display.
-  - Add time-range and bucket selectors for hour/day/week usage charts.
-  - Add model/provider breakdown and request detail views.
+- [x] Step 11: add the first Access Key user portal.
+  - Added `/user` with Access Key login and logout screens.
+  - Added current balance display and hourly/daily/weekly usage selector.
+  - Added a responsive model usage view backed by the authenticated user APIs.
+  - Provider and request-detail views remain pending until the corresponding server read APIs are added.
   - Keep admin operations and provider configuration out of the user portal.
 - [ ] Step 12: verify the complete user journey.
   - Provision an Access Key with an initial credit.

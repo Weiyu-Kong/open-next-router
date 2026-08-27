@@ -246,6 +246,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/app.css", s.handleAppCSS)
 	mux.HandleFunc("/app.js", s.handleAppJS)
+	mux.HandleFunc("/user", s.handleUserIndex)
+	mux.HandleFunc("/user/", s.handleUserIndex)
+	mux.HandleFunc("/user.css", s.handleUserCSS)
+	mux.HandleFunc("/user.js", s.handleUserJS)
 	api := http.NewServeMux()
 	api.HandleFunc("/api/providers", s.handleProviders)
 	api.HandleFunc("/api/provider", s.handleProvider)
@@ -507,6 +511,23 @@ func (s *Server) handleAppCSS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAppJS(w http.ResponseWriter, r *http.Request) {
 	writeTextAsset(w, r, "application/javascript; charset=utf-8", appJS)
+}
+
+func (s *Server) handleUserIndex(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet || (r.URL.Path != "/user" && r.URL.Path != "/user/") {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, userHTML)
+}
+
+func (s *Server) handleUserCSS(w http.ResponseWriter, r *http.Request) {
+	writeTextAsset(w, r, "text/css; charset=utf-8", userCSS)
+}
+
+func (s *Server) handleUserJS(w http.ResponseWriter, r *http.Request) {
+	writeTextAsset(w, r, "application/javascript; charset=utf-8", userJS)
 }
 
 func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
