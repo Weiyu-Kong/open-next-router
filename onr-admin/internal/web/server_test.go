@@ -153,6 +153,19 @@ func TestUserPortalAssets(t *testing.T) {
 	}
 }
 
+func TestUserLoginRateLimit(t *testing.T) {
+	srv := &Server{loginAttempts: make(map[string]loginAttempt)}
+	for i := 0; i < maxUserLoginFailures; i++ {
+		if srv.loginRateLimited("client") {
+			t.Fatalf("attempt %d unexpectedly limited", i)
+		}
+		srv.recordLoginFailure("client")
+	}
+	if !srv.loginRateLimited("client") {
+		t.Fatal("expected client to be rate limited")
+	}
+}
+
 func TestSaveProviderRequiresValidationSuccess(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(dir, 0o750); err != nil {

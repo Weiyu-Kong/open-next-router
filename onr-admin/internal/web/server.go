@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -59,12 +60,20 @@ type Server struct {
 	requireAuth    bool
 	service        *adminservice.Service
 	userSessions   map[string]userSession
+	loginAttempts  map[string]loginAttempt
 }
 
 type userSession struct {
 	Record    controlplane.AccessKeyRecord
 	ExpiresAt time.Time
 }
+
+type loginAttempt struct {
+	Failures int
+	ResetAt  time.Time
+}
+
+const maxUserLoginFailures = 5
 
 type providerRequest struct {
 	Provider string `json:"provider"`
@@ -230,6 +239,7 @@ func newServerWithOptions(providersDir, dumpsDir, defaultBaseURL, cfgPath, token
 		adminToken:     token,
 		requireAuth:    requireAuth,
 		userSessions:   make(map[string]userSession),
+		loginAttempts:  make(map[string]loginAttempt),
 	}
 	if strings.TrimSpace(cfgPath) != "" {
 		admin, err := adminservice.New(cfgPath)
@@ -290,6 +300,11 @@ func (s *Server) handleUserLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "user authentication is not configured"})
 		return
 	}
+	client := loginClientID(r)
+	if s.loginRateLimited(client) {
+		writeJSONAny(w, http.StatusTooManyRequests, map[string]any{"ok": false, "error": "too many login attempts"})
+		return
+	}
 	var in struct {
 		AccessKey string `json:"access_key"`
 	}
@@ -299,10 +314,12 @@ func (s *Server) handleUserLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := s.service.AuthenticateAccessKey(r.Context(), in.AccessKey)
 	if err != nil {
+		s.recordLoginFailure(client)
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "authentication service unavailable"})
 		return
 	}
 	if record == nil {
+		s.recordLoginFailure(client)
 		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "invalid access key"})
 		return
 	}
@@ -312,10 +329,44 @@ func (s *Server) handleUserLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	delete(s.loginAttempts, client)
 	s.userSessions[token] = userSession{Record: *record, ExpiresAt: time.Now().Add(userSessionTTL)}
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: userSessionCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(userSessionTTL.Seconds())})
 	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "account": safeUserAccount(*record), "expires_at": time.Now().Add(userSessionTTL)})
+}
+
+func loginClientID(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	if value := strings.TrimSpace(r.RemoteAddr); value != "" {
+		return value
+	}
+	return "unknown"
+}
+
+func (s *Server) loginRateLimited(client string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	attempt, ok := s.loginAttempts[client]
+	if !ok || time.Now().After(attempt.ResetAt) {
+		return false
+	}
+	return attempt.Failures >= maxUserLoginFailures
+}
+
+func (s *Server) recordLoginFailure(client string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	attempt := s.loginAttempts[client]
+	if attempt.ResetAt.IsZero() || now.After(attempt.ResetAt) {
+		attempt = loginAttempt{ResetAt: now.Add(time.Minute)}
+	}
+	attempt.Failures++
+	s.loginAttempts[client] = attempt
 }
 
 func (s *Server) handleUserLogout(w http.ResponseWriter, r *http.Request) {

@@ -336,6 +336,7 @@ identifier as the authorization source.
   - Sessions use an opaque random HttpOnly cookie and are stored server-side with a 12-hour expiry.
   - The user API is mounted outside the administrator Bearer-token middleware; administrator endpoints remain protected separately.
   - Added focused tests for opaque session tokens and unauthenticated user access.
+  - Added a five-failure per-client one-minute login throttle; successful login clears the failure counter.
   - Keep the existing admin token flow separate from user access.
   - Add logout, session expiry, brute-force protection, and generic authentication errors.
   - Do not expose the Meterry API key or Redis credentials to the browser.
