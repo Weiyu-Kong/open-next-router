@@ -1107,6 +1107,33 @@ func (s *Server) handleAdminAccessKey(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "ledger_entry": entry})
 		return
 	}
+	if len(parts) == 2 && parts[1] == "meter" {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		rec, err := s.service.GetAccessKey(r.Context(), name)
+		if err != nil {
+			writeJSONAny(w, http.StatusServiceUnavailable, adminAccessKeyResponse{Error: "access key lookup unavailable"})
+			return
+		}
+		if rec == nil {
+			writeJSONAny(w, http.StatusNotFound, adminAccessKeyResponse{Error: "access key not found"})
+			return
+		}
+		balance, err := s.service.ReadAccessKeyBalance(r.Context(), *rec)
+		if err != nil {
+			writeJSONAny(w, http.StatusServiceUnavailable, adminAccessKeyResponse{Error: "balance service unavailable"})
+			return
+		}
+		limits, err := s.service.ReadAccessKeyLimits(r.Context(), *rec)
+		if err != nil {
+			writeJSONAny(w, http.StatusServiceUnavailable, adminAccessKeyResponse{Error: "limits service unavailable"})
+			return
+		}
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "balance": balance, "limits": limits})
+		return
+	}
 	if len(parts) == 2 && (parts[1] == "rotate" || parts[1] == "revoke") {
 		if r.Method != http.MethodPost {
 			writeMethodNotAllowed(w, http.MethodPost)
