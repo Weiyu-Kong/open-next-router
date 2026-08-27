@@ -382,6 +382,7 @@ identifier as the authorization source.
   - Reject attempts to query another account, subject, or Access Key.
 - [ ] Step 10: add usage aggregation views.
   - Support hourly, daily, and weekly buckets.
+  - User portal supports 24-hour, 7-day, and 30-day windows shared by usage, bills, and requests.
   - Support custom start/end timestamps with bounded query ranges and an explicit timezone.
   - Support total usage and grouping by model and provider.
   - Return request count, input tokens, output tokens, cache tokens when available, and charged amount.
