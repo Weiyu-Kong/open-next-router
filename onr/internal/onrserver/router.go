@@ -104,10 +104,16 @@ func NewRouter(
 						// Legacy Redis records used the access key name as the subject.
 						subjectID = strings.TrimSpace(record.Name)
 					}
+					accountID := strings.TrimSpace(record.AccountID)
+					if accountID == "" {
+						accountID = subjectID
+					}
 					return auth.AuthPrincipal{
-						AccessKeyID: strings.TrimSpace(record.Name),
-						SubjectType: subjectType,
-						SubjectID:   subjectID,
+						AccessKeyID:   strings.TrimSpace(record.Name),
+						AccountID:     accountID,
+						SubjectType:   subjectType,
+						SubjectID:     subjectID,
+						RoutePolicyID: strings.TrimSpace(record.RoutePolicyID),
 					}, true, nil
 				}
 				if cfg.Redis.AccessKeyMode == "redis_only" {
@@ -124,6 +130,7 @@ func NewRouter(
 			}
 			return auth.AuthPrincipal{
 				AccessKeyID: strings.TrimSpace(ak.Name),
+				AccountID:   strings.TrimSpace(ak.Name),
 				SubjectID:   strings.TrimSpace(ak.Name),
 			}, true, nil
 		},

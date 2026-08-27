@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/dsllang"
+	"github.com/r9s-ai/open-next-router/pkg/controlplane"
 )
 
 const validOpenAIConf = `
@@ -66,6 +67,19 @@ provider "openai" {
   }
 }
 `
+
+func TestSafeAccessKeyIncludesAccountAndRoutePolicy(t *testing.T) {
+	record := safeAccessKey(controlplane.AccessKeyRecord{
+		Name:          "client-a",
+		SubjectType:   "api_key",
+		SubjectID:     "subject-a",
+		AccountID:     "account-a",
+		RoutePolicyID: "standard-user",
+	})
+	if record["account_id"] != "account-a" || record["route_policy_id"] != "standard-user" {
+		t.Fatalf("safe access key=%v", record)
+	}
+}
 
 func TestSaveProviderRequiresValidationSuccess(t *testing.T) {
 	dir := t.TempDir()

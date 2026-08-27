@@ -238,8 +238,15 @@ Access Key 在 Redis 中只保存 route_policy_id，不要把大量隐式供应�
   - Meterry events now include the non-secret `access_key_id` in billing metadata.
   - Balance checks now use the authenticated principal subject when present.
 - [x] Balance policy clarification: balance checking remains a best-effort pre-request allow/deny check. This iteration does not add atomic quota reservation, strict hard limits, or request-cost preauthorization; a small amount of overspend remains allowed.
-- [ ] Step 2: add account and route-policy fields to the control plane.
+- [x] Step 2: add account and route-policy fields to the control plane.
+  - Added `account_id` and `route_policy_id` to Redis-backed `AccessKeyRecord`.
+  - Propagated both identifiers through `auth.AuthPrincipal` and Meterry event metadata.
+  - Added account and route-policy input/display support to the admin CLI, Web UI, and TUI.
+  - Access-key migration writes `account_id` explicitly; it defaults to the key name for legacy file-backed keys.
+  - Redis writes normalize missing `subject_id` to the access-key name and missing `account_id` to `subject_id`.
+  - Redis administrative reads also normalize legacy JSON records in memory, including records without a stored name.
+  - `route_policy_id` is metadata only in this step; it is not yet used to authorize provider/model selection.
 - [ ] Step 3: add provider/model authorization rules per access key.
 - [ ] Step 4: add an authoritative ledger only if the product later requires stricter accounting.
 
-Verification note: the current environment does not provide `go` or `gofmt`, so Go formatting and tests could not be executed in this workspace.
+Verification note: `gofmt` and `go test ./...` passed with Go 1.26.6 using `/tmp` Go caches.

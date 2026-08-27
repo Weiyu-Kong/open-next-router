@@ -72,8 +72,8 @@ func newAccessKeysModel(service *adminService) accessKeysModel {
 	filter.Placeholder = "name / subject / status"
 	filter.CharLimit = 120
 	filter.Blur()
-	inputs := make([]textinput.Model, 4)
-	labels := []string{"name", "subject type", "subject id", "expires at (RFC3339, optional)"}
+	inputs := make([]textinput.Model, 6)
+	labels := []string{"name", "subject type", "subject id", "account id (optional)", "route policy id (optional)", "expires at (RFC3339, optional)"}
 	for i := range inputs {
 		inputs[i] = textinput.New()
 		inputs[i].Prompt = labels[i] + ": "
@@ -305,8 +305,8 @@ func (m accessKeysModel) createCmd() tea.Cmd {
 			return accessActionMsg{err: fmt.Errorf("name, subject type, and subject ID are required")}
 		}
 		var expires *time.Time
-		if values[3] != "" {
-			parsed, err := time.Parse(time.RFC3339, values[3])
+		if values[5] != "" {
+			parsed, err := time.Parse(time.RFC3339, values[5])
 			if err != nil || parsed.Before(time.Now().UTC()) {
 				return accessActionMsg{err: fmt.Errorf("expires at must be a future RFC3339 timestamp")}
 			}
@@ -316,7 +316,7 @@ func (m accessKeysModel) createCmd() tea.Cmd {
 		if err != nil {
 			return accessActionMsg{err: err}
 		}
-		secret, err := m.service.CreateAccessKey(context.Background(), values[0], values[1], values[2], expires, metadata)
+		secret, err := m.service.CreateAccessKey(context.Background(), values[0], values[1], values[2], values[3], values[4], expires, metadata)
 		return accessActionMsg{action: "create", secret: secret, err: err}
 	}
 }
@@ -466,7 +466,11 @@ func renderAccessDetail(record controlplane.AccessKeyRecord, state controlplane.
 	if state.Blocked {
 		blocked = "true (" + valueOrDash(state.BlockedReason) + ")"
 	}
-	return fmt.Sprintf("Access key: %s\n\nstatus: %s\nsubject: %s/%s\nblocked: %s\ncreated: %s\nexpires: %s\nversion: %d\nmetadata: %s\n\nEsc back", record.Name, record.Status, record.SubjectType, record.SubjectID, blocked, record.CreatedAt.Format(time.RFC3339), expires, record.Version, metadata)
+	accountID := valueOrDash(record.AccountID)
+	if accountID == "-" {
+		accountID = valueOrDash(record.SubjectID)
+	}
+	return fmt.Sprintf("Access key: %s\n\nstatus: %s\naccount: %s\nroute policy: %s\nsubject: %s/%s\nblocked: %s\ncreated: %s\nexpires: %s\nversion: %d\nmetadata: %s\n\nEsc back", record.Name, record.Status, accountID, valueOrDash(record.RoutePolicyID), record.SubjectType, record.SubjectID, blocked, record.CreatedAt.Format(time.RFC3339), expires, record.Version, metadata)
 }
 
 func parseMetadata(value string) (map[string]string, error) {

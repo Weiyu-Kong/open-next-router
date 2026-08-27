@@ -16,16 +16,20 @@ type AccessKeyResolver func(ctx context.Context, accessKey string) (principal Au
 // SubjectType and SubjectID are intentionally separate from AccessKeyID because
 // multiple access keys may belong to the same billing subject.
 type AuthPrincipal struct {
-	AccessKeyID string
-	SubjectType string
-	SubjectID   string
+	AccessKeyID   string
+	AccountID     string
+	SubjectType   string
+	SubjectID     string
+	RoutePolicyID string
 }
 
 const (
-	ctxAuthPrincipal    = "onr.auth_principal"
-	ctxAuthAccessKeyID  = "onr.auth_access_key_id"
-	ctxAuthSubjectType  = "onr.auth_subject_type"
-	ctxAuthSubjectID    = "onr.auth_subject_id"
+	ctxAuthPrincipal   = "onr.auth_principal"
+	ctxAuthAccessKeyID = "onr.auth_access_key_id"
+	ctxAuthAccountID   = "onr.auth_account_id"
+	ctxAuthSubjectType = "onr.auth_subject_type"
+	ctxAuthSubjectID   = "onr.auth_subject_id"
+	ctxAuthRoutePolicy = "onr.auth_route_policy_id"
 )
 
 type TokenKeyOptions struct {
@@ -39,6 +43,7 @@ func Middleware(masterKey string, matchAccessKey AccessKeyMatcher, tokenOpts ...
 			name, ok := matchAccessKey(accessKey)
 			return AuthPrincipal{
 				AccessKeyID: strings.TrimSpace(name),
+				AccountID:   strings.TrimSpace(name),
 				SubjectID:   strings.TrimSpace(name),
 			}, ok, nil
 		}
@@ -155,17 +160,25 @@ func setPrincipal(c *gin.Context, principal AuthPrincipal) {
 		return
 	}
 	principal.AccessKeyID = strings.TrimSpace(principal.AccessKeyID)
+	principal.AccountID = strings.TrimSpace(principal.AccountID)
 	principal.SubjectType = strings.TrimSpace(principal.SubjectType)
 	principal.SubjectID = strings.TrimSpace(principal.SubjectID)
+	principal.RoutePolicyID = strings.TrimSpace(principal.RoutePolicyID)
 	c.Set(ctxAuthPrincipal, principal)
 	if principal.AccessKeyID != "" {
 		c.Set(ctxAuthAccessKeyID, principal.AccessKeyID)
+	}
+	if principal.AccountID != "" {
+		c.Set(ctxAuthAccountID, principal.AccountID)
 	}
 	if principal.SubjectType != "" {
 		c.Set(ctxAuthSubjectType, principal.SubjectType)
 	}
 	if principal.SubjectID != "" {
 		c.Set(ctxAuthSubjectID, principal.SubjectID)
+	}
+	if principal.RoutePolicyID != "" {
+		c.Set(ctxAuthRoutePolicy, principal.RoutePolicyID)
 	}
 }
 
@@ -190,6 +203,14 @@ func AccessKeyID(c *gin.Context) string {
 	return strings.TrimSpace(c.GetString(ctxAuthAccessKeyID))
 }
 
+// AccountID returns the account identifier from the request context.
+func AccountID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.GetString(ctxAuthAccountID))
+}
+
 // SubjectType returns the authenticated billing subject type from the request context.
 func SubjectType(c *gin.Context) string {
 	if c == nil {
@@ -204,6 +225,14 @@ func SubjectID(c *gin.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(c.GetString(ctxAuthSubjectID))
+}
+
+// RoutePolicyID returns the route policy identifier from the request context.
+func RoutePolicyID(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.GetString(ctxAuthRoutePolicy))
 }
 
 func parseToken(got string, allowBYOKWithoutK bool) (*TokenClaims, string) {

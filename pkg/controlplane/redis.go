@@ -43,15 +43,17 @@ type Client struct {
 }
 
 type AccessKeyRecord struct {
-	Name        string            `json:"name"`
-	SecretHash  string            `json:"secret_hash"`
-	Status      string            `json:"status"`
-	SubjectType string            `json:"subject_type"`
-	SubjectID   string            `json:"subject_id"`
-	CreatedAt   time.Time         `json:"created_at"`
-	ExpiresAt   *time.Time        `json:"expires_at,omitempty"`
-	Version     int64             `json:"version"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Name          string            `json:"name"`
+	SecretHash    string            `json:"secret_hash"`
+	Status        string            `json:"status"`
+	SubjectType   string            `json:"subject_type"`
+	SubjectID     string            `json:"subject_id"`
+	AccountID     string            `json:"account_id,omitempty"`
+	RoutePolicyID string            `json:"route_policy_id,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+	ExpiresAt     *time.Time        `json:"expires_at,omitempty"`
+	Version       int64             `json:"version"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
 }
 
 type SubjectState struct {
@@ -209,6 +211,10 @@ func (c *Client) GetAccessKeyRecord(ctx context.Context, name string) (*AccessKe
 	if err := json.Unmarshal([]byte(raw), &record); err != nil {
 		return nil, fmt.Errorf("decode Redis access key: %w", err)
 	}
+	if strings.TrimSpace(record.Name) == "" {
+		record.Name = strings.TrimSpace(name)
+	}
+	record = normalizeAccessKeyRecord(record)
 	return &record, nil
 }
 
@@ -216,6 +222,7 @@ func (c *Client) PutAccessKey(ctx context.Context, record AccessKeyRecord) error
 	if strings.TrimSpace(record.Name) == "" || strings.TrimSpace(record.SecretHash) == "" {
 		return errors.New("access key name and secret hash are required")
 	}
+	record = normalizeAccessKeyRecord(record)
 	if record.Status == "" {
 		record.Status = "active"
 	}
@@ -239,6 +246,7 @@ func (c *Client) CreateAccessKey(ctx context.Context, record AccessKeyRecord) er
 	if strings.TrimSpace(record.Name) == "" || strings.TrimSpace(record.SecretHash) == "" {
 		return errors.New("access key name and secret hash are required")
 	}
+	record = normalizeAccessKeyRecord(record)
 	if record.Status == "" {
 		record.Status = "active"
 	}
@@ -277,6 +285,22 @@ return 1`
 	default:
 		return fmt.Errorf("unexpected access key creation result %d", result)
 	}
+}
+
+func normalizeAccessKeyRecord(record AccessKeyRecord) AccessKeyRecord {
+	record.Name = strings.TrimSpace(record.Name)
+	record.Status = strings.TrimSpace(record.Status)
+	record.SubjectType = strings.TrimSpace(record.SubjectType)
+	record.SubjectID = strings.TrimSpace(record.SubjectID)
+	record.AccountID = strings.TrimSpace(record.AccountID)
+	record.RoutePolicyID = strings.TrimSpace(record.RoutePolicyID)
+	if record.SubjectID == "" {
+		record.SubjectID = record.Name
+	}
+	if record.AccountID == "" {
+		record.AccountID = record.SubjectID
+	}
+	return record
 }
 
 func (c *Client) RevokeAccessKey(ctx context.Context, name string) error {

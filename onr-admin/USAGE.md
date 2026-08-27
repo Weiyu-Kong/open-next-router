@@ -24,6 +24,23 @@ Generate a token key in the form of `onr:v1?...`, which can be used in `Authoriz
 onr-admin token create --config ./onr.yaml --access-key-name client-a -p openai -m gpt-4o-mini
 ```
 
+## 2.1 access-key
+
+When creating a Redis-backed access key, `--account-id` optionally groups
+multiple access keys under one account. If omitted, it defaults to
+`--subject-id`. `--route-policy-id` stores the future routing-policy
+association; this iteration does not enforce that policy yet.
+
+```bash
+onr-admin access-key create \
+  --config ./onr.yaml \
+  --name client-a \
+  --subject-type api_key \
+  --subject-id account-a \
+  --account-id account-a \
+  --route-policy-id standard-user
+```
+
 ## 3. crypto
 
 Encryption and master key helpers.

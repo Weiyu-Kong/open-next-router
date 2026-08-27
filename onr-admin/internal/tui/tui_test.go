@@ -43,6 +43,21 @@ func TestAccessKeysModelIncludesAdministrativeStatuses(t *testing.T) {
 	}
 }
 
+func TestRenderAccessDetailIncludesAccountAndRoutePolicy(t *testing.T) {
+	record := controlplane.AccessKeyRecord{
+		Name:          "client-a",
+		Status:        "active",
+		SubjectType:   "api_key",
+		SubjectID:     "subject-a",
+		AccountID:     "account-a",
+		RoutePolicyID: "standard-user",
+	}
+	view := renderAccessDetail(record, controlplane.SubjectState{})
+	if !strings.Contains(view, "account: account-a") || !strings.Contains(view, "route policy: standard-user") {
+		t.Fatalf("access detail=%q", view)
+	}
+}
+
 func TestRootModuleNavigation(t *testing.T) {
 	m := newRootModel(nil, "./dumps")
 	if m.active != overviewModule {

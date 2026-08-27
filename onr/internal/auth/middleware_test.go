@@ -32,9 +32,11 @@ func TestMiddlewareWithResolverPropagatesPrincipal(t *testing.T) {
 	r := gin.New()
 	r.Use(MiddlewareWithResolver("", func(context.Context, string) (AuthPrincipal, bool, error) {
 		return AuthPrincipal{
-			AccessKeyID: "key-record",
-			SubjectType: "account",
-			SubjectID:   "acct-1",
+			AccessKeyID:   "key-record",
+			AccountID:     "account-1",
+			SubjectType:   "account",
+			SubjectID:     "acct-1",
+			RoutePolicyID: "standard-user",
 		}, true, nil
 	}))
 	r.GET("/ok", func(c *gin.Context) {
@@ -43,11 +45,11 @@ func TestMiddlewareWithResolverPropagatesPrincipal(t *testing.T) {
 			c.String(http.StatusInternalServerError, "principal missing")
 			return
 		}
-		if principal.AccessKeyID != "key-record" || principal.SubjectType != "account" || principal.SubjectID != "acct-1" {
+		if principal.AccessKeyID != "key-record" || principal.AccountID != "account-1" || principal.SubjectType != "account" || principal.SubjectID != "acct-1" || principal.RoutePolicyID != "standard-user" {
 			c.String(http.StatusInternalServerError, "principal=%+v", principal)
 			return
 		}
-		if AccessKeyID(c) != "key-record" || SubjectType(c) != "account" || SubjectID(c) != "acct-1" {
+		if AccessKeyID(c) != "key-record" || AccountID(c) != "account-1" || SubjectType(c) != "account" || SubjectID(c) != "acct-1" || RoutePolicyID(c) != "standard-user" {
 			c.String(http.StatusInternalServerError, "getter mismatch")
 			return
 		}
@@ -81,6 +83,10 @@ func TestMiddleware_TokenKey_AccessKey(t *testing.T) {
 		}
 		if AccessKeyID(c) != "client1" || SubjectID(c) != "client1" {
 			c.String(http.StatusInternalServerError, "legacy principal missing")
+			return
+		}
+		if AccountID(c) != "client1" {
+			c.String(http.StatusInternalServerError, "legacy account missing")
 			return
 		}
 		c.String(200, "ok")

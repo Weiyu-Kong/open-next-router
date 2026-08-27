@@ -19,7 +19,7 @@ type Event struct {
 	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
-func NewEvent(requestID string, provider string, api string, model string, stream bool, status int, usageStage string, usage map[string]any, subjectType string, subjectID string, appname string, pricingHints map[string]any, accessKeyID string) Event {
+func NewEvent(requestID string, provider string, api string, model string, stream bool, status int, usageStage string, usage map[string]any, subjectType string, subjectID string, appname string, pricingHints map[string]any, accessKeyID string, accountID string, routePolicyID string) Event {
 	rid := strings.TrimSpace(requestID)
 	provider = strings.TrimSpace(provider)
 	api = strings.TrimSpace(api)
@@ -27,6 +27,8 @@ func NewEvent(requestID string, provider string, api string, model string, strea
 	subjectType = strings.TrimSpace(subjectType)
 	subjectID = strings.TrimSpace(subjectID)
 	accessKeyID = strings.TrimSpace(accessKeyID)
+	accountID = strings.TrimSpace(accountID)
+	routePolicyID = strings.TrimSpace(routePolicyID)
 	usage = normalizeUsageAliases(usage)
 	raw := map[string]any{
 		"provider":    provider,
@@ -44,6 +46,12 @@ func NewEvent(requestID string, provider string, api string, model string, strea
 	}
 	if accessKeyID != "" {
 		raw["meta"].(map[string]any)["access_key_id"] = accessKeyID
+	}
+	if accountID != "" {
+		raw["meta"].(map[string]any)["account_id"] = accountID
+	}
+	if routePolicyID != "" {
+		raw["meta"].(map[string]any)["route_policy_id"] = routePolicyID
 	}
 	if appname = strings.TrimSpace(appname); appname != "" {
 		raw["meta"].(map[string]any)["appname"] = appname

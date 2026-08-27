@@ -104,7 +104,7 @@ func (s *adminService) GetAccessKey(ctx context.Context, name string) (*controlp
 	return s.cp.GetAccessKeyRecord(ctx, name)
 }
 
-func (s *adminService) CreateAccessKey(ctx context.Context, name, subjectType, subjectID string, expiresAt *time.Time, metadata map[string]string) (string, error) {
+func (s *adminService) CreateAccessKey(ctx context.Context, name, subjectType, subjectID, accountID, routePolicyID string, expiresAt *time.Time, metadata map[string]string) (string, error) {
 	if s.cp == nil {
 		return "", fmt.Errorf("redis access-key management is disabled")
 	}
@@ -112,9 +112,14 @@ func (s *adminService) CreateAccessKey(ctx context.Context, name, subjectType, s
 	if err != nil {
 		return "", err
 	}
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		accountID = strings.TrimSpace(subjectID)
+	}
 	record := controlplane.AccessKeyRecord{
 		Name: name, SecretHash: s.cp.HashAccessKey(secret), Status: "active",
-		SubjectType: subjectType, SubjectID: subjectID, ExpiresAt: expiresAt, Metadata: metadata,
+		SubjectType: subjectType, SubjectID: subjectID, AccountID: accountID,
+		RoutePolicyID: strings.TrimSpace(routePolicyID), ExpiresAt: expiresAt, Metadata: metadata,
 	}
 	if err := s.cp.CreateAccessKey(ctx, record); err != nil {
 		return "", err
@@ -216,7 +221,15 @@ func (s *adminService) Migrate(ctx context.Context, keysPath string, dryRun bool
 	}
 	report := migrationReport{Total: len(keys.AccessKeys())}
 	for _, key := range keys.AccessKeys() {
-		record := controlplane.AccessKeyRecord{Name: key.Name, SecretHash: s.cp.HashAccessKey(key.Value), Status: "active", SubjectType: "api_key", SubjectID: key.Name, Metadata: map[string]string{"comment": key.Comment}}
+		record := controlplane.AccessKeyRecord{
+			Name:        key.Name,
+			SecretHash:  s.cp.HashAccessKey(key.Value),
+			Status:      "active",
+			SubjectType: "api_key",
+			SubjectID:   key.Name,
+			AccountID:   key.Name,
+			Metadata:    map[string]string{"comment": key.Comment},
+		}
 		existing, err := s.cp.GetAccessKeyRecord(ctx, record.Name)
 		if err != nil {
 			return report, err

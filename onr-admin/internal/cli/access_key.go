@@ -22,10 +22,12 @@ func newAccessKeyCmd() *cobra.Command {
 }
 
 type accessKeyOptions struct {
-	cfgPath     string
-	name        string
-	subjectType string
-	subjectID   string
+	cfgPath       string
+	name          string
+	subjectType   string
+	subjectID     string
+	accountID     string
+	routePolicyID string
 }
 
 func newAccessKeyCreateCmd() *cobra.Command {
@@ -43,11 +45,23 @@ func newAccessKeyCreateCmd() *cobra.Command {
 		if strings.TrimSpace(opts.name) == "" {
 			return errors.New("--name is required")
 		}
-		record := controlplane.AccessKeyRecord{Name: opts.name, SecretHash: client.HashAccessKey(secret), Status: "active", SubjectType: opts.subjectType, SubjectID: opts.subjectID}
+		accountID := strings.TrimSpace(opts.accountID)
+		if accountID == "" {
+			accountID = strings.TrimSpace(opts.subjectID)
+		}
+		record := controlplane.AccessKeyRecord{
+			Name:          opts.name,
+			SecretHash:    client.HashAccessKey(secret),
+			Status:        "active",
+			SubjectType:   opts.subjectType,
+			SubjectID:     opts.subjectID,
+			AccountID:     accountID,
+			RoutePolicyID: strings.TrimSpace(opts.routePolicyID),
+		}
 		if err := client.CreateAccessKey(context.Background(), record); err != nil {
 			return err
 		}
-		fmt.Printf("name=%s subject=%s/%s secret=%s\n", record.Name, record.SubjectType, record.SubjectID, secret)
+		fmt.Printf("name=%s account=%s subject=%s/%s route_policy=%s secret=%s\n", record.Name, record.AccountID, record.SubjectType, record.SubjectID, record.RoutePolicyID, secret)
 		return nil
 	}}
 	addAccessKeyFlags(cmd, &opts, true)
@@ -68,7 +82,7 @@ func newAccessKeyListCmd() *cobra.Command {
 		}
 		sort.Slice(records, func(i, j int) bool { return records[i].Name < records[j].Name })
 		for _, record := range records {
-			fmt.Printf("name=%s status=%s subject=%s/%s version=%d\n", record.Name, record.Status, record.SubjectType, record.SubjectID, record.Version)
+			fmt.Printf("name=%s status=%s account=%s subject=%s/%s route_policy=%s version=%d\n", record.Name, record.Status, record.AccountID, record.SubjectType, record.SubjectID, record.RoutePolicyID, record.Version)
 		}
 		return nil
 	}}
@@ -131,7 +145,15 @@ func newAccessKeyMigrateCmd() *cobra.Command {
 		}
 		defer func() { _ = client.Close() }()
 		for _, key := range keys.AccessKeys() {
-			record := controlplane.AccessKeyRecord{Name: key.Name, SecretHash: client.HashAccessKey(key.Value), Status: "active", SubjectType: "api_key", SubjectID: key.Name, Metadata: map[string]string{"comment": key.Comment}}
+			record := controlplane.AccessKeyRecord{
+				Name:        key.Name,
+				SecretHash:  client.HashAccessKey(key.Value),
+				Status:      "active",
+				SubjectType: "api_key",
+				SubjectID:   key.Name,
+				AccountID:   key.Name,
+				Metadata:    map[string]string{"comment": key.Comment},
+			}
 			existing, err := client.GetAccessKey(context.Background(), record.Name)
 			if err != nil {
 				return err
@@ -162,6 +184,8 @@ func addAccessKeyFlags(cmd *cobra.Command, opts *accessKeyOptions, subject bool)
 	if subject {
 		cmd.Flags().StringVar(&opts.subjectType, "subject-type", opts.subjectType, "Meterry subject type")
 		cmd.Flags().StringVar(&opts.subjectID, "subject-id", "", "Meterry subject ID")
+		cmd.Flags().StringVar(&opts.accountID, "account-id", "", "Account ID; defaults to subject ID")
+		cmd.Flags().StringVar(&opts.routePolicyID, "route-policy-id", "", "Route policy ID for future access control")
 	}
 }
 

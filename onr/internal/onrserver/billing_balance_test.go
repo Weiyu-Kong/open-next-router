@@ -116,7 +116,7 @@ func TestEnforceBillingBalanceUsesPrincipalSubject(t *testing.T) {
 		ExtractorRuleSet: "ers",
 		OutboxDir:        t.TempDir(),
 		BalanceEnabled:   true,
-		BalanceCurrency:   "USD",
+		BalanceCurrency:  "USD",
 		BalanceTimeout:   time.Second,
 	})
 	if err != nil {
@@ -133,9 +133,11 @@ func TestEnforceBillingBalanceUsesPrincipalSubject(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(rec)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	ctx.Set("onr.auth_principal", auth.AuthPrincipal{
-		AccessKeyID: "key-1",
-		SubjectType: "account",
-		SubjectID:   "account-1",
+		AccessKeyID:   "key-1",
+		AccountID:     "account-1",
+		SubjectType:   "account",
+		SubjectID:     "account-1",
+		RoutePolicyID: "standard-user",
 	})
 	ctx.Set("onr.auth_subject_id", "legacy-key-name")
 

@@ -15,6 +15,7 @@ import (
 
 type CreateAccessKeyInput struct {
 	Name, SubjectType, SubjectID string
+	AccountID, RoutePolicyID     string
 	ExpiresAt                    *time.Time
 	Metadata                     map[string]string
 }
@@ -97,7 +98,21 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 	if e != nil {
 		return "", e
 	}
-	rec := controlplane.AccessKeyRecord{Name: in.Name, SecretHash: s.cp.HashAccessKey(secret), Status: "active", SubjectType: in.SubjectType, SubjectID: in.SubjectID, ExpiresAt: in.ExpiresAt, Metadata: in.Metadata}
+	accountID := strings.TrimSpace(in.AccountID)
+	if accountID == "" {
+		accountID = strings.TrimSpace(in.SubjectID)
+	}
+	rec := controlplane.AccessKeyRecord{
+		Name:          in.Name,
+		SecretHash:    s.cp.HashAccessKey(secret),
+		Status:        "active",
+		SubjectType:   in.SubjectType,
+		SubjectID:     in.SubjectID,
+		AccountID:     accountID,
+		RoutePolicyID: strings.TrimSpace(in.RoutePolicyID),
+		ExpiresAt:     in.ExpiresAt,
+		Metadata:      in.Metadata,
+	}
 	if e = s.cp.CreateAccessKey(ctx, rec); e != nil {
 		return "", e
 	}
@@ -206,7 +221,15 @@ func (s *Service) MigrateAccessKeys(ctx context.Context, path string, dry bool) 
 	}
 	r.Total = len(ks.AccessKeys())
 	for _, k := range ks.AccessKeys() {
-		rec := controlplane.AccessKeyRecord{Name: k.Name, SecretHash: s.cp.HashAccessKey(k.Value), Status: "active", SubjectType: "api_key", SubjectID: k.Name, Metadata: map[string]string{"comment": k.Comment}}
+		rec := controlplane.AccessKeyRecord{
+			Name:        k.Name,
+			SecretHash:  s.cp.HashAccessKey(k.Value),
+			Status:      "active",
+			SubjectType: "api_key",
+			SubjectID:   k.Name,
+			AccountID:   k.Name,
+			Metadata:    map[string]string{"comment": k.Comment},
+		}
 		old, e := s.cp.GetAccessKeyRecord(ctx, rec.Name)
 		if e != nil {
 			return r, e

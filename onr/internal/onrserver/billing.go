@@ -26,6 +26,8 @@ func enqueueBillingEvent(cfg *config.Config, sink *meterry.Client, c *gin.Contex
 	}
 	principal, _ := auth.PrincipalFromContext(c)
 	accessKeyID := strings.TrimSpace(principal.AccessKeyID)
+	accountID := strings.TrimSpace(principal.AccountID)
+	routePolicyID := strings.TrimSpace(principal.RoutePolicyID)
 	subjectType := strings.TrimSpace(principal.SubjectType)
 	if subjectType == "" {
 		subjectType = strings.TrimSpace(cfg.Meterry.SubjectType)
@@ -59,6 +61,8 @@ func enqueueBillingEvent(cfg *config.Config, sink *meterry.Client, c *gin.Contex
 		appname,
 		pricingHints(res.Cost),
 		accessKeyID,
+		accountID,
+		routePolicyID,
 	)
 	if err := sink.Enqueue(event); err != nil {
 		// Billing is deliberately best-effort for the request path. The sink owns

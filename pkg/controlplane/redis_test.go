@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -34,10 +35,12 @@ func TestAccessKeyRoundTripAndRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := AccessKeyRecord{
-		Name:        "client-a",
-		SecretHash:  c.HashAccessKey(secret),
-		SubjectType: "api_key",
-		SubjectID:   "client-a",
+		Name:          "client-a",
+		SecretHash:    c.HashAccessKey(secret),
+		SubjectType:   "api_key",
+		SubjectID:     "client-a",
+		AccountID:     "account-a",
+		RoutePolicyID: "standard-user",
 	}
 	if err := c.CreateAccessKey(context.Background(), record); err != nil {
 		t.Fatal(err)
@@ -46,7 +49,7 @@ func TestAccessKeyRoundTripAndRevoke(t *testing.T) {
 		t.Fatal("expected duplicate access key error")
 	}
 	got, err := c.LookupAccessKey(context.Background(), secret)
-	if err != nil || got == nil || got.Name != "client-a" {
+	if err != nil || got == nil || got.Name != "client-a" || got.AccountID != "account-a" || got.RoutePolicyID != "standard-user" {
 		t.Fatalf("LookupAccessKey=(%+v,%v)", got, err)
 	}
 	if err := c.RevokeAccessKey(context.Background(), "client-a"); err != nil {
@@ -82,6 +85,50 @@ func TestListAccessKeyRecordsIncludesRevokedAndExpired(t *testing.T) {
 	}
 	if record, err := c.GetAccessKey(ctx, "active"); err != nil || record != nil {
 		t.Fatalf("active lookup after revoke=(%+v,%v), want nil,nil", record, err)
+	}
+}
+
+func TestAccessKeyRecordDefaultsAccountAndSubjectIDs(t *testing.T) {
+	c := newTestClient(t)
+	secret, err := NewAccessKeySecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CreateAccessKey(context.Background(), AccessKeyRecord{
+		Name:       "legacy-key",
+		SecretHash: c.HashAccessKey(secret),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	record, err := c.GetAccessKeyRecord(context.Background(), "legacy-key")
+	if err != nil || record == nil {
+		t.Fatalf("record=(%+v,%v)", record, err)
+	}
+	if record.SubjectID != "legacy-key" || record.AccountID != "legacy-key" {
+		t.Fatalf("record IDs=%+v", record)
+	}
+}
+
+func TestGetAccessKeyRecordNormalizesLegacyJSON(t *testing.T) {
+	c := newTestClient(t)
+	raw, err := json.Marshal(AccessKeyRecord{
+		SecretHash:  c.HashAccessKey("legacy-secret"),
+		Status:      "active",
+		SubjectType: "api_key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.rdb.Set(context.Background(), c.accessKeyRecordKey("legacy-name"), raw, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	record, err := c.GetAccessKeyRecord(context.Background(), "legacy-name")
+	if err != nil || record == nil {
+		t.Fatalf("record=(%+v,%v)", record, err)
+	}
+	if record.Name != "legacy-name" || record.SubjectID != "legacy-name" || record.AccountID != "legacy-name" {
+		t.Fatalf("normalized legacy record=%+v", record)
 	}
 }
 
