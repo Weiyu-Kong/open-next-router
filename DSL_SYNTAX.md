@@ -117,6 +117,7 @@ provider "<name>" { ... }
 provider "openai" {
   observability {
     upstream_request_id "x-request-id" "openai-request-id";
+    upstream_request_id_json "$.id";
   }
 }
 ```
@@ -128,6 +129,18 @@ provider "openai" {
 - The value is recorded as the `upstream_request_id` access-log field. It does not replace the client `request_id`.
 - Missing or empty headers do not fail or change forwarding. The value is not copied to the downstream response; use an explicit response header directive if forwarding is required.
 - Values are trimmed and limited to 256 bytes for logging.
+- `upstream_request_id_json` requires exactly one quoted path from ONR's
+  restricted JSONPath subset and must end with `;`.
+- The JSON rule runs only for non-stream responses, after `resp_map` and before
+  `json_del`, `json_set`, and `json_rename`. This allows an ID to be recorded
+  even when an explicitly configured response operation removes it downstream.
+- If both directives are configured and a declared response header contains a
+  value, the header value wins. The JSON path is an explicit fallback.
+- Missing paths, non-string values, and invalid JSON do not fail or alter the
+  response. Values are trimmed and limited to 256 bytes.
+- `upstream_request_id_json` does not inspect SSE events. Streaming provider
+  request-ID extraction requires a separate explicit SSE directive and is not
+  supported by this rule.
 
 ## 4. match rules (selection)
 

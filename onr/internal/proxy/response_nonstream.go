@@ -63,6 +63,7 @@ func (c *Client) handleNonStreamResponse(
 	// but before response json ops (json_del/json_set/json_rename) so operators can strip fields
 	// from downstream without losing upstream usage/finish_reason signals.
 	metricsBody := respOutBody
+	recordUpstreamRequestIDFromJSON(gc, pf, metricsBody)
 	populateNonStreamDerivedUsage(gc, m, pf, model, resp, metricsBody)
 	estimateEnabled := shouldEstimateUsage(resp.StatusCode)
 

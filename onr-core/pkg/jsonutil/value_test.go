@@ -98,6 +98,25 @@ func TestGetStringByPath_SupportsWildcardAndIndex(t *testing.T) {
 	}
 }
 
+func TestValidPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"$.id", true},
+		{"$.items[0].id", true},
+		{"$.items[*].id", true},
+		{"id", false},
+		{"$.", false},
+		{"$.items[", false},
+	}
+	for _, tt := range tests {
+		if got := ValidPath(tt.path); got != tt.want {
+			t.Errorf("ValidPath(%q)=%v want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
 func TestCoerceScalarString(t *testing.T) {
 	tests := []struct {
 		name string

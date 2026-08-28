@@ -282,7 +282,7 @@ Verification Pending
   selection shared by usage, bills, and request history.
 - [ ] Confirm all empty, loading, partial-failure, and narrow-screen states.
 
-### Stage 6: Provider Usage APIs and Reconciliation - Adapter Complete,
+### Stage 6: Provider Usage APIs and Reconciliation - Correlation DSL Complete,
 Automatic Reconciliation Pending
 
 - [x] Define a provider-neutral bounded usage adapter contract.
@@ -291,7 +291,7 @@ Automatic Reconciliation Pending
   reconciliation events.
 - [x] Implement and test the OpenRouter generation-detail adapter against a
   realistic response fixture, including its explicit no-pagination limitation.
-- [ ] Add an explicit DSL directive for extracting the provider request ID from
+- [x] Add an explicit DSL directive for extracting the provider request ID from
   response JSON, including parsing, validation, documentation, semantic tests,
   and provider-directory validation. Initial support is non-streaming only
   unless SSE correlation is separately specified and tested.
@@ -329,21 +329,19 @@ Automatic Reconciliation Pending
 Work proceeds in small stages, and this file is updated after each completed
 stage. Each completed stage receives a dedicated Git commit.
 
-1. **Stage 6A - Explicit correlation DSL.** Add response-JSON upstream request
-   ID extraction, configure it for OpenRouter, and complete the DSL checklist.
-2. **Stage 6B - Secure reconciliation state.** Add validated authoritative-mode
+1. **Stage 6B - Secure reconciliation state.** Add validated authoritative-mode
    runtime configuration, environment-only provider credentials, and durable
    Redis candidate/lease/retry storage.
-3. **Stage 6C - Automatic authoritative billing.** Suppress direct billing for
+2. **Stage 6C - Automatic authoritative billing.** Suppress direct billing for
    explicitly authoritative providers, poll OpenRouter, charge with the original
    ONR idempotency identity, and prove retry/restart no-double-charge behavior.
-4. **Stage 6D - Operations.** Add checkpoint/overlap behavior where supported,
+3. **Stage 6D - Operations.** Add checkpoint/overlap behavior where supported,
    reconciliation lag/failure/dead-letter metrics, and administrator retry
    controls. Document OpenRouter's per-request/no-pagination limitation.
-5. **Stage 7A - Real-service acceptance.** Run Redis + Meterry + ONR + provider
+4. **Stage 7A - Real-service acceptance.** Run Redis + Meterry + ONR + provider
    journeys for chat completions, responses, streaming/non-streaming behavior,
    two-key isolation, initial credit, rotation, revocation, and reconciliation.
-6. **Stage 7B - Production readiness.** Complete leakage audit, browser state
+5. **Stage 7B - Production readiness.** Complete leakage audit, browser state
    verification, deployment/migration/backup/recovery/rollback documentation,
    and operational runbooks.
 
@@ -382,6 +380,12 @@ shape and must not be documented as broader coverage.
 - 2026-08-28: a concrete OpenRouter generation-detail usage adapter passed
   realistic HTTP response, server-owned authentication, request-ID integrity,
   bounded-window, and normalization tests. The root module passed `go test ./...`.
+- 2026-08-28: Stage 6A added the explicit
+  `upstream_request_id_json "$.id";` provider directive and configured it for
+  OpenRouter. Parser/validation tests cover malformed and duplicate rules;
+  runtime tests cover response-header priority, missing/invalid/non-string
+  values, and extraction before downstream JSON deletion. The independent
+  `onr-core` and root modules both passed complete `go test ./...` suites.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 

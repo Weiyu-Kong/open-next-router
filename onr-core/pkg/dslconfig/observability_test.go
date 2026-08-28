@@ -39,6 +39,24 @@ func TestValidateProviderFile_ObservabilityUpstreamRequestID(t *testing.T) {
 	}
 }
 
+func TestValidateProviderFile_ObservabilityUpstreamRequestIDJSON(t *testing.T) {
+	path := writeObservabilityProvider(t, `
+	observability {
+		upstream_request_id_json "$.data.id";
+	}
+`)
+	pf, err := ValidateProviderFile(path)
+	if err != nil {
+		t.Fatalf("ValidateProviderFile: %v", err)
+	}
+	if pf.Observability.UpstreamRequestIDJSON == nil {
+		t.Fatal("expected upstream request ID JSON rule")
+	}
+	if got := pf.Observability.UpstreamRequestIDJSON.Path; got != "$.data.id" {
+		t.Fatalf("path=%q want $.data.id", got)
+	}
+}
+
 func TestValidateProviderFile_ObservabilityRejectsInvalidRules(t *testing.T) {
 	tests := []struct {
 		name string
@@ -48,6 +66,12 @@ func TestValidateProviderFile_ObservabilityRejectsInvalidRules(t *testing.T) {
 		{"missing semicolon", `observability { upstream_request_id "x-request-id" }`, "expected ';' after upstream_request_id"},
 		{"invalid header", `observability { upstream_request_id "bad header"; }`, "invalid upstream request ID header name"},
 		{"duplicate header", `observability { upstream_request_id "X-Request-ID" "x-request-id"; }`, "duplicate upstream request ID header"},
+		{"duplicate header directive", `observability { upstream_request_id "x-request-id"; upstream_request_id "request-id"; }`, "duplicate upstream_request_id directive"},
+		{"json path must be string", `observability { upstream_request_id_json $.id; }`, "expects one JSONPath string"},
+		{"invalid json path", `observability { upstream_request_id_json "id"; }`, "invalid upstream request ID JSONPath"},
+		{"extra json path", `observability { upstream_request_id_json "$.id" "$.other"; }`, "expects one JSONPath string followed by ';'"},
+		{"missing json semicolon", `observability { upstream_request_id_json "$.id" }`, "expects one JSONPath string followed by ';'"},
+		{"duplicate json directive", `observability { upstream_request_id_json "$.id"; upstream_request_id_json "$.request_id"; }`, "duplicate upstream_request_id_json directive"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,5 +101,8 @@ func TestValidateProviderFile_ObservabilityMissingIsUnset(t *testing.T) {
 	}
 	if pf.Observability.UpstreamRequestID != nil {
 		t.Fatalf("expected unset rule, got %#v", pf.Observability.UpstreamRequestID)
+	}
+	if pf.Observability.UpstreamRequestIDJSON != nil {
+		t.Fatalf("expected unset JSON rule, got %#v", pf.Observability.UpstreamRequestIDJSON)
 	}
 }

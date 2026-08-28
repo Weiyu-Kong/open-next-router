@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -101,5 +102,88 @@ func TestRecordUpstreamRequestIDTruncatesAt256Bytes(t *testing.T) {
 	}}, &http.Response{Header: header})
 	if got := c.GetString("onr.upstream_request_id"); len(got) != 256 {
 		t.Fatalf("upstream_request_id length=%d want 256", len(got))
+	}
+}
+
+func TestRecordUpstreamRequestIDFromJSONUsesConfiguredPath(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	pf := dslconfig.ProviderFile{Observability: dslconfig.ProviderObservability{
+		UpstreamRequestIDJSON: &dslconfig.UpstreamRequestIDJSONRule{Path: "$.data.id"},
+	}}
+
+	recordUpstreamRequestIDFromJSON(c, pf, []byte(`{"data":{"id":"  generation-123  "},"implicit_id":"ignored"}`))
+
+	if got := c.GetString("onr.upstream_request_id"); got != "generation-123" {
+		t.Fatalf("upstream_request_id=%q want generation-123", got)
+	}
+}
+
+func TestRecordUpstreamRequestIDFromJSONKeepsHeaderPriority(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	pf := dslconfig.ProviderFile{Observability: dslconfig.ProviderObservability{
+		UpstreamRequestID:     &dslconfig.UpstreamRequestIDRule{Headers: []string{"x-request-id"}},
+		UpstreamRequestIDJSON: &dslconfig.UpstreamRequestIDJSONRule{Path: "$.id"},
+	}}
+	recordUpstreamRequestID(c, pf, &http.Response{Header: http.Header{"X-Request-Id": []string{"header-id"}}})
+	recordUpstreamRequestIDFromJSON(c, pf, []byte(`{"id":"json-id"}`))
+
+	if got := c.GetString("onr.upstream_request_id"); got != "header-id" {
+		t.Fatalf("upstream_request_id=%q want header-id", got)
+	}
+}
+
+func TestRecordUpstreamRequestIDFromJSONIgnoresUnusableBodies(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	pf := dslconfig.ProviderFile{Observability: dslconfig.ProviderObservability{
+		UpstreamRequestIDJSON: &dslconfig.UpstreamRequestIDJSONRule{Path: "$.id"},
+	}}
+	for _, body := range []string{`not-json`, `{}`, `{"id":123}`, `{"other":"implicit-id"}`} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		recordUpstreamRequestIDFromJSON(c, pf, []byte(body))
+		if _, ok := c.Get("onr.upstream_request_id"); ok {
+			t.Fatalf("body=%s unexpectedly set upstream request ID", body)
+		}
+	}
+}
+
+func TestHandleNonStreamResponseRecordsJSONRequestIDBeforeJSONOps(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	gc, _ := gin.CreateTestContext(w)
+	gc.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+	pf := dslconfig.ProviderFile{Observability: dslconfig.ProviderObservability{
+		UpstreamRequestIDJSON: &dslconfig.UpstreamRequestIDJSONRule{Path: "$.id"},
+	}}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"id":"generation-before-delete","output":"ok"}`)),
+	}
+
+	_, err := (&Client{}).handleNonStreamResponse(
+		gc,
+		"example",
+		ProviderKey{Name: "internal-key"},
+		"chat.completions",
+		false,
+		time.Now(),
+		pf,
+		&dslmeta.Meta{API: "chat.completions"},
+		"example-model",
+		[]byte(`{}`),
+		&dslconfig.ResponseDirective{JSONOps: []dslconfig.JSONOp{{Op: "json_del", Path: "$.id"}}},
+		resp,
+	)
+	if err != nil {
+		t.Fatalf("handleNonStreamResponse: %v", err)
+	}
+	if got := gc.GetString("onr.upstream_request_id"); got != "generation-before-delete" {
+		t.Fatalf("upstream_request_id=%q want generation-before-delete", got)
+	}
+	if strings.Contains(w.Body.String(), "generation-before-delete") {
+		t.Fatalf("downstream body still contains deleted request ID: %s", w.Body.String())
 	}
 }

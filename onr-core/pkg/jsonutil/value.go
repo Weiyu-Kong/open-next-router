@@ -225,6 +225,13 @@ func GetStringByPath(root map[string]any, path string) string {
 	return getStringByParts(root, compiled.parts)
 }
 
+// ValidPath reports whether path uses the restricted JSONPath subset supported
+// by this package.
+func ValidPath(path string) bool {
+	_, ok := lookupCompiledPath(path)
+	return ok
+}
+
 // GetFirstStringByPaths returns the first non-empty string resolved from the given paths.
 func GetFirstStringByPaths(root map[string]any, paths ...string) string {
 	for _, path := range paths {

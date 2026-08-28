@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/r9s-ai/open-next-router/onr-core/pkg/jsonutil"
 )
 
 func parseObservabilityBlock(s *scanner) (ProviderObservability, error) {
@@ -20,18 +22,48 @@ func parseObservabilityBlock(s *scanner) (ProviderObservability, error) {
 		case tokRBrace:
 			return out, nil
 		case tokIdent:
-			if tok.text != "upstream_request_id" {
+			switch tok.text {
+			case "upstream_request_id":
+				if out.UpstreamRequestID != nil {
+					return ProviderObservability{}, s.errAt(tok, "duplicate upstream_request_id directive")
+				}
+				headers, err := parseUpstreamRequestIDHeaders(s)
+				if err != nil {
+					return ProviderObservability{}, err
+				}
+				out.UpstreamRequestID = &UpstreamRequestIDRule{Headers: headers}
+			case "upstream_request_id_json":
+				if out.UpstreamRequestIDJSON != nil {
+					return ProviderObservability{}, s.errAt(tok, "duplicate upstream_request_id_json directive")
+				}
+				path, err := parseUpstreamRequestIDJSONPath(s)
+				if err != nil {
+					return ProviderObservability{}, err
+				}
+				out.UpstreamRequestIDJSON = &UpstreamRequestIDJSONRule{Path: path}
+			default:
 				return ProviderObservability{}, s.errAt(tok, fmt.Sprintf("unknown observability directive %q", tok.text))
 			}
-			headers, err := parseUpstreamRequestIDHeaders(s)
-			if err != nil {
-				return ProviderObservability{}, err
-			}
-			out.UpstreamRequestID = &UpstreamRequestIDRule{Headers: headers}
 		default:
 			return ProviderObservability{}, s.errAt(tok, "unexpected token in observability block")
 		}
 	}
+}
+
+func parseUpstreamRequestIDJSONPath(s *scanner) (string, error) {
+	pathTok := s.nextNonTrivia()
+	if pathTok.kind != tokString {
+		return "", s.errAt(pathTok, "upstream_request_id_json expects one JSONPath string")
+	}
+	path := strings.TrimSpace(unquoteString(pathTok.text))
+	if !jsonutil.ValidPath(path) {
+		return "", s.errAt(pathTok, fmt.Sprintf("invalid upstream request ID JSONPath %q", path))
+	}
+	semi := s.nextNonTrivia()
+	if semi.kind != tokSemicolon {
+		return "", s.errAt(semi, "upstream_request_id_json expects one JSONPath string followed by ';'")
+	}
+	return path, nil
 }
 
 func parseUpstreamRequestIDHeaders(s *scanner) ([]string, error) {

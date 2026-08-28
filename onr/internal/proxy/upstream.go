@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/dslconfig"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/dslmeta"
+	"github.com/r9s-ai/open-next-router/onr-core/pkg/jsonutil"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/trafficdump"
 )
 
@@ -97,13 +99,38 @@ func recordUpstreamRequestID(gc *gin.Context, pf dslconfig.ProviderFile, resp *h
 	}
 	for _, name := range rule.Headers {
 		if value := strings.TrimSpace(resp.Header.Get(name)); value != "" {
-			if len(value) > 256 {
-				value = value[:256]
-			}
-			gc.Set("onr.upstream_request_id", value)
+			setUpstreamRequestID(gc, value)
 			return
 		}
 	}
+}
+
+// recordUpstreamRequestIDFromJSON is a non-stream fallback for providers that
+// explicitly declare a response JSONPath. A configured response-header ID wins.
+func recordUpstreamRequestIDFromJSON(gc *gin.Context, pf dslconfig.ProviderFile, body []byte) {
+	if _, exists := gc.Get("onr.upstream_request_id"); exists {
+		return
+	}
+	rule := pf.Observability.UpstreamRequestIDJSON
+	if rule == nil || len(body) == 0 {
+		return
+	}
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return
+	}
+	setUpstreamRequestID(gc, jsonutil.GetStringByPath(root, rule.Path))
+}
+
+func setUpstreamRequestID(gc *gin.Context, value string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	if len(value) > 256 {
+		value = value[:256]
+	}
+	gc.Set("onr.upstream_request_id", value)
 }
 
 func isEffectiveStream(clientStream bool, resp *http.Response, respDir *dslconfig.ResponseDirective) bool {
