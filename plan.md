@@ -392,6 +392,7 @@ identifier as the authorization source.
   - Keep provider and internal-key dimensions available to administrators while suppressing them from the default user response.
   - Added `/api/admin/meter/access-keys` for cross-account balances and model/provider usage and billing summaries.
   - Added a Redis + Meterry SDK integration-style test for the administrator cross-account summary path.
+  - Added a Billing-page administrator table with 24-hour, 7-day, and 30-day balance, request, charge, model, and provider summaries.
   - Show data freshness and pending billing-event information because ingestion is asynchronous.
 - [x] Step 11: add the first Access Key user portal.
   - Added `/user` with Access Key login and logout screens.
