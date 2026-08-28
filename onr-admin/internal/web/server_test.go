@@ -201,6 +201,29 @@ func TestUserUsageBucket(t *testing.T) {
 	}
 }
 
+func TestParseUserQueryWindow(t *testing.T) {
+	now := time.Date(2026, time.August, 28, 12, 0, 0, 0, time.UTC)
+	req := httptest.NewRequest(http.MethodGet, "/api/user/usage?start=1787911200&end=1787918400&timezone=Asia%2FShanghai", nil)
+	window, err := parseUserQueryWindow(req, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window.Start != 1787911200 || window.End != 1787918400 || window.Timezone != "Asia/Shanghai" {
+		t.Fatalf("window=%+v", window)
+	}
+
+	for _, query := range []string{
+		"start=1787911200&end=1787918400&timezone=not-a-zone",
+		"start=1787918400&end=1787911200&timezone=UTC",
+		"start=1787911200&end=1893456000&timezone=UTC",
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/api/user/usage?"+query, nil)
+		if _, err := parseUserQueryWindow(req, now); err == nil {
+			t.Fatalf("query %q unexpectedly accepted", query)
+		}
+	}
+}
+
 func TestUserPortalAssets(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "openai.conf"), []byte(validOpenAIConf), 0o600); err != nil {

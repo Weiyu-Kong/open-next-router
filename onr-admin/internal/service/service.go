@@ -41,6 +41,17 @@ type UserUsageQuery struct {
 	Limit      int
 }
 
+func (s *Service) BillingCurrency() string {
+	if s == nil || s.cfg == nil {
+		return "USD"
+	}
+	currency := strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
+	if currency == "" {
+		return "USD"
+	}
+	return currency
+}
+
 type AccessKeyMeterSummary struct {
 	AccessKeyID string                             `json:"access_key_id"`
 	Status      string                             `json:"status"`
@@ -243,10 +254,7 @@ func (s *Service) provisionMeterry(ctx context.Context, rec controlplane.AccessK
 	if _, err := s.meterry.Manager.BindSubjectForProject(ctx, s.cfg.Meterry.ProjectID, types.BindAccountSubjectRequest{AccountID: accountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID}); err != nil {
 		return "", fmt.Errorf("bind Meterry subject: %w", err)
 	}
-	currency := strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
-	if currency == "" {
-		currency = "USD"
-	}
+	currency := s.BillingCurrency()
 	wallets, err := s.meterry.Manager.ListWalletsForProject(ctx, s.cfg.Meterry.ProjectID, sdk.ListWalletsRequest{AccountID: accountID})
 	if err != nil {
 		return "", fmt.Errorf("list Meterry wallets: %w", err)
@@ -302,10 +310,7 @@ func (s *Service) AdjustAccessKeyBalance(ctx context.Context, name, operation st
 	}
 	currency := strings.TrimSpace(in.Currency)
 	if currency == "" {
-		currency = strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
-	}
-	if currency == "" {
-		currency = "USD"
+		currency = s.BillingCurrency()
 	}
 	key := strings.TrimSpace(in.IdempotencyKey)
 	if key == "" {
@@ -344,10 +349,7 @@ func (s *Service) ReadAccessKeyBalance(ctx context.Context, rec controlplane.Acc
 	if accountID == "" {
 		return nil, fmt.Errorf("access key has no Meterry account")
 	}
-	currency := strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
-	if currency == "" {
-		currency = "USD"
-	}
+	currency := s.BillingCurrency()
 	return s.meterry.Manager.ReadVirtualWalletAmountForProject(ctx, s.cfg.Meterry.ProjectID, types.ReadVirtualWalletRequest{AccountID: accountID, Currency: currency})
 }
 
@@ -355,10 +357,7 @@ func (s *Service) ReadAccessKeyLimits(ctx context.Context, rec controlplane.Acce
 	if s.meterry == nil {
 		return nil, fmt.Errorf("Meterry is not configured")
 	}
-	currency := strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
-	if currency == "" {
-		currency = "USD"
-	}
+	currency := s.BillingCurrency()
 	accountID := strings.TrimSpace(rec.MeterryAccountID)
 	if accountID == "" {
 		accountID = strings.TrimSpace(rec.AccountID)
@@ -380,7 +379,7 @@ func (s *Service) QueryAccessKeyEvents(ctx context.Context, rec controlplane.Acc
 	return s.meterry.Query.ListProjectUsageEvents(ctx, s.cfg.Meterry.ProjectID, types.ListUsageEventLogsRequest{SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, StartTime: startTime, EndTime: endTime, Limit: limit})
 }
 
-func (s *Service) QueryAccessKeyBills(ctx context.Context, rec controlplane.AccessKeyRecord, startTime, endTime int64, limit int) (*types.UsageBillQueryResponse, error) {
+func (s *Service) QueryAccessKeyBills(ctx context.Context, rec controlplane.AccessKeyRecord, startTime, endTime int64, timezone string, limit int) (*types.UsageBillQueryResponse, error) {
 	if s.meterry == nil {
 		return nil, fmt.Errorf("Meterry is not configured")
 	}
@@ -389,7 +388,7 @@ func (s *Service) QueryAccessKeyBills(ctx context.Context, rec controlplane.Acce
 		accountID = strings.TrimSpace(rec.AccountID)
 	}
 	return s.meterry.Query.BillForProject(ctx, s.cfg.Meterry.ProjectID, types.UsageBillQueryRequest{
-		Timezone: "UTC", BillingAccountID: accountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID,
+		Timezone: timezone, BillingAccountID: accountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID,
 		Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, StartTime: startTime, EndTime: endTime,
 		GroupBy: []string{"model"}, Limit: limit,
 	})

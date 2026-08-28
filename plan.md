@@ -218,8 +218,8 @@ Verification Pending
 - [x] Derive every query scope from the authenticated Access Key record.
 - [x] Support hour/day/week buckets and bounded 24-hour, 7-day, and 30-day
   ranges.
-- [ ] Include explicit currency metadata consistently in usage and bill
-  responses.
+- [x] Include explicit configured currency metadata consistently in balance,
+  limits, usage, bill, and request-history responses.
 - [ ] Verify the read APIs against a production-compatible Meterry deployment.
 
 ### Stage 5: Customer and Administrator Views - Mostly Complete
@@ -232,7 +232,8 @@ Verification Pending
   portal through session-scoped `/api/user/freshness`.
 - [x] Increment pending state when a keyed billing event is enqueued and clear it
   atomically when the event is acknowledged or moved to dead letter.
-- [ ] Add bounded custom start/end timestamps and explicit timezone selection.
+- [x] Add bounded custom start/end timestamps and explicit IANA timezone
+  selection shared by usage, bills, and request history.
 - [ ] Confirm all empty, loading, partial-failure, and narrow-screen states.
 
 ### Stage 6: Provider Usage APIs and Reconciliation - Framework Complete,
@@ -271,12 +272,11 @@ Concrete Integration Pending
 Work proceeds in small stages, and this file is updated after each completed
 stage. Each completed stage receives a dedicated Git commit.
 
-1. Add consistent currency metadata and finish custom range/timezone behavior.
-2. Add provisioning failure-injection tests.
-3. Configure and verify the first concrete provider usage API integration.
-4. Add durable reconciliation checkpoints, lag visibility, and no-double-charge
+1. Add provisioning failure-injection tests.
+2. Configure and verify the first concrete provider usage API integration.
+3. Add durable reconciliation checkpoints, lag visibility, and no-double-charge
    tests.
-5. Execute the full real-service journey and close the production-readiness
+4. Execute the full real-service journey and close the production-readiness
    acceptance criteria.
 
 ## 7. Verification Record
@@ -288,6 +288,9 @@ stage. Each completed stage receives a dedicated Git commit.
 - 2026-08-28: the root module passed `go test ./...` after per-Access-Key
   freshness tracking was added. Focused tests also verified Access Key isolation,
   successful acknowledgement, dead-letter cleanup, and the user endpoint.
+- 2026-08-28: the root module passed `go test ./...` after shared time-range,
+  IANA timezone, and currency metadata support was added to all user meter
+  queries. The embedded portal assets and JavaScript syntax were also checked.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 

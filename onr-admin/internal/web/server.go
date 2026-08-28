@@ -43,6 +43,7 @@ const (
 )
 
 var providerNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+var timezoneNamePattern = regexp.MustCompile(`^[A-Za-z0-9_+/-]{1,64}$`)
 
 type Options struct {
 	ConfigPath   string
@@ -413,7 +414,7 @@ func (s *Server) handleUserBalance(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "balance service unavailable"})
 		return
 	}
-	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "balance": snapshot})
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "currency": s.service.BillingCurrency(), "balance": snapshot})
 }
 
 func (s *Server) handleUserLimits(w http.ResponseWriter, r *http.Request) {
@@ -431,7 +432,7 @@ func (s *Server) handleUserLimits(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "limits service unavailable"})
 		return
 	}
-	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "limits": snapshot})
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "currency": s.service.BillingCurrency(), "limits": snapshot})
 }
 
 func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
@@ -444,11 +445,9 @@ func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
 		return
 	}
-	now := time.Now().Unix()
-	start := parseUnixQuery(r.URL.Query().Get("start"), now-24*60*60)
-	end := parseUnixQuery(r.URL.Query().Get("end"), now)
-	if start < now-31*24*60*60 || end <= start || end-start > 31*24*60*60 {
-		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "usage range must be within 31 days"})
+	window, err := parseUserQueryWindow(r, time.Now())
+	if err != nil {
+		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
 	bucket, ok := userUsageBucket(r.URL.Query().Get("bucket"))
@@ -457,12 +456,12 @@ func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groupBy := []string{"bucket", "model"}
-	response, err := s.service.QueryAccessKeyUsage(r.Context(), record, adminservice.UserUsageQuery{BucketSize: bucket, StartTime: start, EndTime: end, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: groupBy, Measures: []string{"quantity"}, Limit: 1000})
+	response, err := s.service.QueryAccessKeyUsage(r.Context(), record, adminservice.UserUsageQuery{BucketSize: bucket, StartTime: window.Start, EndTime: window.End, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: groupBy, Measures: []string{"quantity"}, Limit: 1000})
 	if err != nil {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "usage service unavailable"})
 		return
 	}
-	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "bucket": r.URL.Query().Get("bucket"), "rows": response.Rows})
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": window.Start, "end": window.End, "timezone": window.Timezone, "currency": s.service.BillingCurrency(), "bucket_size": bucket, "rows": response.Rows})
 }
 
 func (s *Server) handleUserRequests(w http.ResponseWriter, r *http.Request) {
@@ -475,14 +474,12 @@ func (s *Server) handleUserRequests(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
 		return
 	}
-	now := time.Now().Unix()
-	start := parseUnixQuery(r.URL.Query().Get("start"), now-24*60*60)
-	end := parseUnixQuery(r.URL.Query().Get("end"), now)
-	if start < now-31*24*60*60 || end <= start || end-start > 31*24*60*60 {
-		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "request range must be within 31 days"})
+	window, err := parseUserQueryWindow(r, time.Now())
+	if err != nil {
+		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	events, err := s.service.QueryAccessKeyEvents(r.Context(), record, start, end, 100)
+	events, err := s.service.QueryAccessKeyEvents(r.Context(), record, window.Start, window.End, 100)
 	if err != nil {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "request history unavailable"})
 		return
@@ -496,7 +493,7 @@ func (s *Server) handleUserRequests(w http.ResponseWriter, r *http.Request) {
 			"metrics":     event.Metrics,
 		})
 	}
-	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "requests": rows})
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": window.Start, "end": window.End, "timezone": window.Timezone, "currency": s.service.BillingCurrency(), "requests": rows})
 }
 
 func (s *Server) handleUserBills(w http.ResponseWriter, r *http.Request) {
@@ -509,14 +506,12 @@ func (s *Server) handleUserBills(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
 		return
 	}
-	now := time.Now().Unix()
-	start := parseUnixQuery(r.URL.Query().Get("start"), now-24*60*60)
-	end := parseUnixQuery(r.URL.Query().Get("end"), now)
-	if start < now-31*24*60*60 || end <= start || end-start > 31*24*60*60 {
-		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bill range must be within 31 days"})
+	window, err := parseUserQueryWindow(r, time.Now())
+	if err != nil {
+		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	bills, err := s.service.QueryAccessKeyBills(r.Context(), record, start, end, 100)
+	bills, err := s.service.QueryAccessKeyBills(r.Context(), record, window.Start, window.End, window.Timezone, 100)
 	if err != nil {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "billing history unavailable"})
 		return
@@ -525,11 +520,7 @@ func (s *Server) handleUserBills(w http.ResponseWriter, r *http.Request) {
 	for _, row := range bills.Rows {
 		rows = append(rows, map[string]any{"model": row.Dimensions["model"], "request_count": row.RequestCount, "amount": row.Amount, "metrics": row.Metrics})
 	}
-	currency := "USD"
-	if cfg := s.service.Config(); cfg != nil && strings.TrimSpace(cfg.Meterry.BalanceEnforcement.Currency) != "" {
-		currency = strings.TrimSpace(cfg.Meterry.BalanceEnforcement.Currency)
-	}
-	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "currency": currency, "bills": rows, "has_more": bills.HasMore})
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": window.Start, "end": window.End, "timezone": window.Timezone, "currency": s.service.BillingCurrency(), "bills": rows, "has_more": bills.HasMore})
 }
 
 func (s *Server) handleUserFreshness(w http.ResponseWriter, r *http.Request) {
@@ -565,6 +556,35 @@ func parseUnixQuery(value string, fallback int64) int64 {
 		return 0
 	}
 	return parsed
+}
+
+type userQueryWindow struct {
+	Start    int64
+	End      int64
+	Timezone string
+}
+
+func parseUserQueryWindow(r *http.Request, now time.Time) (userQueryWindow, error) {
+	nowUnix := now.Unix()
+	window := userQueryWindow{
+		Start:    parseUnixQuery(r.URL.Query().Get("start"), nowUnix-24*60*60),
+		End:      parseUnixQuery(r.URL.Query().Get("end"), nowUnix),
+		Timezone: strings.TrimSpace(r.URL.Query().Get("timezone")),
+	}
+	if window.Timezone == "" {
+		window.Timezone = "UTC"
+	}
+	if !timezoneNamePattern.MatchString(window.Timezone) {
+		return userQueryWindow{}, fmt.Errorf("timezone must be a valid IANA timezone")
+	}
+	if _, err := time.LoadLocation(window.Timezone); err != nil {
+		return userQueryWindow{}, fmt.Errorf("timezone must be a valid IANA timezone")
+	}
+	const maxRange = int64(31 * 24 * 60 * 60)
+	if window.Start <= 0 || window.End <= window.Start || window.End-window.Start > maxRange || window.Start < nowUnix-maxRange || window.End > nowUnix+5*60 {
+		return userQueryWindow{}, fmt.Errorf("time range must be within the previous 31 days")
+	}
+	return window, nil
 }
 
 func userUsageBucket(value string) (string, bool) {

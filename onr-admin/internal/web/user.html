@@ -1,6 +1,64 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ONR Meter</title><link rel="stylesheet" href="/user.css"></head>
-<body><main id="login" class="login"><div class="login-panel"><p class="tag">ONR / METER</p><h1>Know your usage.</h1><p class="muted">Sign in with the Access Key you use for the gateway.</p><form id="loginForm"><label>Access Key<input id="accessKey" type="password" autocomplete="off" required></label><button>Open meter</button><p id="loginError" class="error"></p></form></div></main>
-<main id="meter" class="meter hidden"><header><div><p class="tag">ACCESS KEY METER</p><h1 id="accountName">Account</h1></div><button id="logout" class="quiet">Log out</button></header>
-<section class="balance"><div><p class="tag">AVAILABLE BALANCE</p><strong id="balance">--</strong><span id="currency"></span></div><div class="balance-meta"><span>Account</span><b id="accountId">--</b><span>Billing</span><b id="freshness">Checking</b><span>Checked</span><b id="updated">--</b></div></section>
-<section class="controls"><div><p class="tag">USAGE WINDOW</p><h2>Consumption</h2></div><div class="control-row"><select id="range" aria-label="Usage range"><option value="1">Last 24 hours</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option></select><select id="bucket" aria-label="Usage bucket"><option value="hour">Hourly</option><option value="day" selected>Daily</option><option value="week">Weekly</option></select><button id="refresh" class="quiet">Refresh</button></div></section><section id="usage" class="usage"><div class="loading">Loading usage...</div></section><section class="spend"><div class="tag">CHARGED AMOUNT</div><div id="bills" class="usage-grid"><div class="loading">Loading charges...</div></div></section><section class="requests"><div class="tag">RECENT REQUESTS</div><div id="requests" class="request-list"><div class="loading">Loading requests...</div></div></section><p id="meterError" class="error"></p></main><script src="/user.js"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ONR Meter</title>
+  <link rel="stylesheet" href="/user.css">
+</head>
+<body>
+  <main id="login" class="login">
+    <div class="login-panel">
+      <p class="tag">ONR / METER</p>
+      <h1>Know your usage.</h1>
+      <p class="muted">Sign in with the Access Key you use for the gateway.</p>
+      <form id="loginForm">
+        <label>Access Key<input id="accessKey" type="password" autocomplete="off" required></label>
+        <button>Open meter</button>
+        <p id="loginError" class="error"></p>
+      </form>
+    </div>
+  </main>
+  <main id="meter" class="meter hidden">
+    <header>
+      <div><p class="tag">ACCESS KEY METER</p><h1 id="accountName">Account</h1></div>
+      <button id="logout" class="quiet">Log out</button>
+    </header>
+    <section class="balance">
+      <div><p class="tag">AVAILABLE BALANCE</p><strong id="balance">--</strong><span id="currency"></span></div>
+      <div class="balance-meta">
+        <span>Account</span><b id="accountId">--</b>
+        <span>Billing</span><b id="freshness">Checking</b>
+        <span>Checked</span><b id="updated">--</b>
+      </div>
+    </section>
+    <section class="controls">
+      <div><p class="tag">USAGE WINDOW</p><h2>Consumption</h2></div>
+      <div class="control-row">
+        <select id="range" aria-label="Usage range">
+          <option value="1">Last 24 hours</option>
+          <option value="7" selected>Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="custom">Custom</option>
+        </select>
+        <select id="bucket" aria-label="Usage bucket">
+          <option value="hour">Hourly</option>
+          <option value="day" selected>Daily</option>
+          <option value="week">Weekly</option>
+        </select>
+        <select id="timezone" aria-label="Timezone"><option value="UTC">UTC</option></select>
+        <button id="refresh" class="quiet">Refresh</button>
+      </div>
+    </section>
+    <section id="customRange" class="custom-range hidden">
+      <label>Start<input id="startTime" type="datetime-local"></label>
+      <label>End<input id="endTime" type="datetime-local"></label>
+    </section>
+    <section id="usage" class="usage"><div class="loading">Loading usage...</div></section>
+    <section class="spend"><div class="tag">CHARGED AMOUNT</div><div id="bills" class="usage-grid"><div class="loading">Loading charges...</div></div></section>
+    <section class="requests"><div class="tag">RECENT REQUESTS</div><div id="requests" class="request-list"><div class="loading">Loading requests...</div></div></section>
+    <p id="meterError" class="error"></p>
+  </main>
+  <script src="/user.js"></script>
+</body>
+</html>

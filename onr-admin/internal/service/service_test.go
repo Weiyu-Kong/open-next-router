@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,11 +11,13 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	sdk "github.com/meterry-com/meterry-go"
+	"github.com/meterry-com/meterry-go/pkg/types"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
 )
 
 func TestListAccessKeyMeterSummaries(t *testing.T) {
+	var billTimezones []string
 	meterryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -26,6 +29,11 @@ func TestListAccessKeyMeterSummaries(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/usage/query"):
 			_, _ = w.Write([]byte(`{"rows":[{"dimensions":{"provider":"openai","model":"gpt-test"},"measures":{"quantity":"10"}}]}`))
 		case strings.HasSuffix(r.URL.Path, "/usage/bills/query"):
+			var request types.UsageBillQueryRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode bill request: %v", err)
+			}
+			billTimezones = append(billTimezones, request.Timezone)
 			_, _ = w.Write([]byte(`{"rows":[{"dimensions":{"provider":"openai","model":"gpt-test"},"request_count":1,"amount":"1.25","metrics":{}}],"has_more":false}`))
 		default:
 			http.NotFound(w, r)
@@ -63,5 +71,14 @@ func TestListAccessKeyMeterSummaries(t *testing.T) {
 	}
 	if rows[0].Balance == nil || rows[0].Balance.AvailableBalance.String() != "90" || len(rows[0].Usage) != 1 || len(rows[0].Bills) != 1 || rows[0].Error != "" {
 		t.Fatalf("unexpected summary: %+v", rows[0])
+	}
+	if _, err := service.QueryAccessKeyBills(t.Context(), controlplane.AccessKeyRecord{SubjectType: "api_key", SubjectID: "subject-a", AccountID: "acct-meterry"}, time.Now().Add(-time.Hour).Unix(), time.Now().Unix(), "Asia/Shanghai", 100); err != nil {
+		t.Fatal(err)
+	}
+	if len(billTimezones) != 2 || billTimezones[0] != "UTC" || billTimezones[1] != "Asia/Shanghai" {
+		t.Fatalf("bill timezones=%v", billTimezones)
+	}
+	if service.BillingCurrency() != "USD" {
+		t.Fatalf("billing currency=%q", service.BillingCurrency())
 	}
 }
