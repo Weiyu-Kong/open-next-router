@@ -310,6 +310,28 @@ Durable State Complete, Automatic Reconciliation Pending
 - [ ] Add reconciliation status, lag, failures, and retry visibility for
   administrators.
 
+### Stage 6C: Ctyun Provider Integration - In Progress
+
+- [x] Confirm Ctyun inference uses Bearer APP_KEY and monitor APIs use EOP AK/SK.
+- [x] Add server-only Ctyun credential fields and environment overrides to the
+  key store; never commit the reference credentials.
+- [x] Add explicit Access Key `provider_key_bindings` for selecting one Ctyun
+  internal key without automatic provider switching.
+- [x] Add the Ctyun EOP signer and monitor aggregate response normalization in
+  `onr-core/pkg/ctyun`.
+- [x] Add the Ctyun provider DSL with explicit chat model mapping and streaming
+  usage inclusion.
+- [ ] Wire Ctyun monitor polling into the user/admin usage APIs. Its API returns
+  time-bucket aggregates, not per-request records, so it must remain reporting
+  data and must not create duplicate billing events.
+- [ ] Run live Ctyun inference and monitor API acceptance with a local key
+  binding, without exposing upstream credentials or URLs.
+
+Implementation note: local unit tests and provider DSL validation pass. Redis
+and HTTP integration suites require socket permissions unavailable in the
+restricted execution sandbox, so live Ctyun/Redis/Meterry acceptance remains
+open.
+
 ### Stage 7: End-to-End and Production Readiness - Pending
 
 - [x] Run complete root-module and independent `onr-core` unit/integration test
@@ -332,16 +354,19 @@ stage. Each completed stage receives a dedicated Git commit.
 1. **Stage 6B - Secure reconciliation state.** Add validated authoritative-mode
    runtime configuration, environment-only provider credentials, and durable
    Redis candidate/lease/retry storage.
-2. **Stage 6C - Automatic authoritative billing.** Suppress direct billing for
+2. **Stage 6C - Ctyun provider integration.** Use explicit Ctyun model mappings,
+   bind each Access Key to one server-owned Ctyun key for testing, and add the
+   EOP monitor protocol without automatic fallback or provider replacement.
+3. **Stage 6D - Automatic authoritative billing.** Suppress direct billing for
    explicitly authoritative providers, poll OpenRouter, charge with the original
    ONR idempotency identity, and prove retry/restart no-double-charge behavior.
-3. **Stage 6D - Operations.** Add checkpoint/overlap behavior where supported,
+4. **Stage 6E - Operations.** Add checkpoint/overlap behavior where supported,
    reconciliation lag/failure/dead-letter metrics, and administrator retry
    controls. Document OpenRouter's per-request/no-pagination limitation.
-4. **Stage 7A - Real-service acceptance.** Run Redis + Meterry + ONR + provider
+5. **Stage 7A - Real-service acceptance.** Run Redis + Meterry + ONR + provider
    journeys for chat completions, responses, streaming/non-streaming behavior,
    two-key isolation, initial credit, rotation, revocation, and reconciliation.
-5. **Stage 7B - Production readiness.** Complete leakage audit, browser state
+6. **Stage 7B - Production readiness.** Complete leakage audit, browser state
    verification, deployment/migration/backup/recovery/rollback documentation,
    and operational runbooks.
 
@@ -393,6 +418,12 @@ shape and must not be documented as broader coverage.
   acknowledgement/retry, sanitized error codes, and expired-lease recovery.
   Focused `go test ./pkg/config ./pkg/controlplane` and the complete root
   `go test ./...` suite passed.
+- 2026-08-28: Stage 6C added the Ctyun provider DSL, explicit public-model to
+  Ctyun model-ID mappings, server-only APP_KEY/EOP credential fields,
+  Access Key to internal-key bindings, EOP signing, and aggregate monitor
+  response normalization. Focused core tests, provider DSL validation, and the
+  complete root `go test ./...` suite passed. Ctyun live API acceptance and
+  monitor report wiring remain pending.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 

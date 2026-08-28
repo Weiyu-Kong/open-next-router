@@ -109,13 +109,14 @@ func NewRouter(
 						accountID = subjectID
 					}
 					return auth.AuthPrincipal{
-						AccessKeyID:      strings.TrimSpace(record.Name),
-						AccountID:        accountID,
-						SubjectType:      subjectType,
-						SubjectID:        subjectID,
-						RoutePolicyID:    strings.TrimSpace(record.RoutePolicyID),
-						AllowedProviders: append([]string(nil), record.AllowedProviders...),
-						AllowedModels:    append([]string(nil), record.AllowedModels...),
+						AccessKeyID:         strings.TrimSpace(record.Name),
+						AccountID:           accountID,
+						SubjectType:         subjectType,
+						SubjectID:           subjectID,
+						RoutePolicyID:       strings.TrimSpace(record.RoutePolicyID),
+						AllowedProviders:    append([]string(nil), record.AllowedProviders...),
+						AllowedModels:       append([]string(nil), record.AllowedModels...),
+						ProviderKeyBindings: cloneStringMap(record.ProviderKeyBindings),
 					}, true, nil
 				}
 				if cfg.Redis.AccessKeyMode == "redis_only" {
@@ -131,9 +132,10 @@ func NewRouter(
 				return auth.AuthPrincipal{}, false, nil
 			}
 			return auth.AuthPrincipal{
-				AccessKeyID: strings.TrimSpace(ak.Name),
-				AccountID:   strings.TrimSpace(ak.Name),
-				SubjectID:   strings.TrimSpace(ak.Name),
+				AccessKeyID:         strings.TrimSpace(ak.Name),
+				AccountID:           strings.TrimSpace(ak.Name),
+				SubjectID:           strings.TrimSpace(ak.Name),
+				ProviderKeyBindings: cloneStringMap(ak.ProviderKeyBindings),
 			}, true, nil
 		},
 		auth.TokenKeyOptions{
@@ -184,6 +186,17 @@ func NewRouter(
 	v1beta.POST("/models/*path", makeGeminiHandler(cfg, st, pclient, resolvedRequestIDHeaderKey, billingClient))
 
 	return r
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 func requestIDMiddleware(headerKey string) gin.HandlerFunc {

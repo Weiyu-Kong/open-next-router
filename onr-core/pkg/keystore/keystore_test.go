@@ -30,6 +30,34 @@ providers: {}
 	}
 }
 
+func TestLoad_CtyunCredentialEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keys.yaml")
+	if err := os.WriteFile(path, []byte(`providers:
+  ctyun:
+    keys:
+      - name: primary
+        value: ""
+        ctyun_access_key: ""
+        ctyun_secure_key: ""
+        ctyun_user_id: ""
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ONR_UPSTREAM_KEY_CTYUN_PRIMARY", "app-key")
+	t.Setenv("ONR_CTYUN_PRIMARY_ACCESS_KEY", "access-key")
+	t.Setenv("ONR_CTYUN_PRIMARY_SECURE_KEY", "secure-key")
+	t.Setenv("ONR_CTYUN_PRIMARY_USER_ID", "user-id")
+	st, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, ok := st.KeyByName("ctyun", "primary")
+	if !ok || k.Value != "app-key" || k.CtyunAccessKey != "access-key" || k.CtyunSecureKey != "secure-key" || k.CtyunUserID != "user-id" {
+		t.Fatalf("unexpected ctyun key: %#v", k)
+	}
+}
+
 func TestLoad_Empty_All(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "keys.yaml")

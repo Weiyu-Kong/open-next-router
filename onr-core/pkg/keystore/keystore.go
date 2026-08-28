@@ -35,13 +35,17 @@ type Key struct {
 	AWSSecretAccessKey string `yaml:"aws_secret_access_key"`
 	AWSSessionToken    string `yaml:"aws_session_token"`
 	AWSRegion          string `yaml:"aws_region"`
+	CtyunAccessKey     string `yaml:"ctyun_access_key"`
+	CtyunSecureKey     string `yaml:"ctyun_secure_key"`
+	CtyunUserID        string `yaml:"ctyun_user_id"`
 }
 
 type AccessKey struct {
-	Name     string `yaml:"name"`
-	Value    string `yaml:"value"`
-	Disabled bool   `yaml:"disabled"`
-	Comment  string `yaml:"comment"`
+	Name                string            `yaml:"name"`
+	Value               string            `yaml:"value"`
+	Disabled            bool              `yaml:"disabled"`
+	Comment             string            `yaml:"comment"`
+	ProviderKeyBindings map[string]string `yaml:"provider_key_bindings"`
 }
 
 type fileFormat struct {
@@ -83,6 +87,18 @@ func Load(path string) (*Store, error) {
 			k.AWSSecretAccessKey = strings.TrimSpace(k.AWSSecretAccessKey)
 			k.AWSSessionToken = strings.TrimSpace(k.AWSSessionToken)
 			k.AWSRegion = normalizeLocation(k.AWSRegion)
+			k.CtyunAccessKey = strings.TrimSpace(k.CtyunAccessKey)
+			k.CtyunSecureKey = strings.TrimSpace(k.CtyunSecureKey)
+			k.CtyunUserID = strings.TrimSpace(k.CtyunUserID)
+			if v := strings.TrimSpace(os.Getenv(envVarForCtyunField(k.Name, "ACCESS_KEY"))); v != "" {
+				k.CtyunAccessKey = v
+			}
+			if v := strings.TrimSpace(os.Getenv(envVarForCtyunField(k.Name, "SECURE_KEY"))); v != "" {
+				k.CtyunSecureKey = v
+			}
+			if v := strings.TrimSpace(os.Getenv(envVarForCtyunField(k.Name, "USER_ID"))); v != "" {
+				k.CtyunUserID = v
+			}
 
 			raw := strings.TrimSpace(k.Value)
 			if envVal := strings.TrimSpace(os.Getenv(envVarForUpstreamKey(p, k.Name, i))); envVal != "" {
@@ -136,6 +152,24 @@ func Load(path string) (*Store, error) {
 		return nil, errors.New("keys.yaml has no provider keys or access_keys configured")
 	}
 	return out, nil
+}
+
+// KeyByName returns a copy of a named key for a provider.
+func (s *Store) KeyByName(provider, name string) (*Key, bool) {
+	if s == nil {
+		return nil, false
+	}
+	p := normalizeProvider(provider)
+	want := strings.TrimSpace(name)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.byProv[p] {
+		if strings.TrimSpace(s.byProv[p][i].Name) == want {
+			key := s.byProv[p][i]
+			return &key, true
+		}
+	}
+	return nil, false
 }
 
 // NextKey returns the next provider key in round-robin order.
@@ -215,6 +249,10 @@ func envVarForAccessKey(name string, index int) string {
 		return fmt.Sprintf("ONR_ACCESS_KEY_%d", index+1)
 	}
 	return fmt.Sprintf("ONR_ACCESS_KEY_%s", sanitizeEnvToken(n))
+}
+
+func envVarForCtyunField(name, field string) string {
+	return "ONR_CTYUN_" + sanitizeEnvToken(strings.ToUpper(name)) + "_" + sanitizeEnvToken(strings.ToUpper(field))
 }
 
 func sanitizeEnvToken(s string) string {

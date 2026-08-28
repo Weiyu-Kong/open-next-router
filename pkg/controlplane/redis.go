@@ -43,22 +43,23 @@ type Client struct {
 }
 
 type AccessKeyRecord struct {
-	Name              string            `json:"name"`
-	SecretHash        string            `json:"secret_hash"`
-	Status            string            `json:"status"`
-	SubjectType       string            `json:"subject_type"`
-	SubjectID         string            `json:"subject_id"`
-	AccountID         string            `json:"account_id,omitempty"`
-	MeterryAccountID  string            `json:"meterry_account_id,omitempty"`
-	Provisioning      string            `json:"provisioning,omitempty"`
-	ProvisioningError string            `json:"provisioning_error,omitempty"`
-	RoutePolicyID     string            `json:"route_policy_id,omitempty"`
-	AllowedProviders  []string          `json:"allowed_providers,omitempty"`
-	AllowedModels     []string          `json:"allowed_models,omitempty"`
-	CreatedAt         time.Time         `json:"created_at"`
-	ExpiresAt         *time.Time        `json:"expires_at,omitempty"`
-	Version           int64             `json:"version"`
-	Metadata          map[string]string `json:"metadata,omitempty"`
+	Name                string            `json:"name"`
+	SecretHash          string            `json:"secret_hash"`
+	Status              string            `json:"status"`
+	SubjectType         string            `json:"subject_type"`
+	SubjectID           string            `json:"subject_id"`
+	AccountID           string            `json:"account_id,omitempty"`
+	MeterryAccountID    string            `json:"meterry_account_id,omitempty"`
+	Provisioning        string            `json:"provisioning,omitempty"`
+	ProvisioningError   string            `json:"provisioning_error,omitempty"`
+	RoutePolicyID       string            `json:"route_policy_id,omitempty"`
+	AllowedProviders    []string          `json:"allowed_providers,omitempty"`
+	AllowedModels       []string          `json:"allowed_models,omitempty"`
+	ProviderKeyBindings map[string]string `json:"provider_key_bindings,omitempty"`
+	CreatedAt           time.Time         `json:"created_at"`
+	ExpiresAt           *time.Time        `json:"expires_at,omitempty"`
+	Version             int64             `json:"version"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
 }
 
 type SubjectState struct {
@@ -341,6 +342,19 @@ func normalizeAccessKeyRecord(record AccessKeyRecord) AccessKeyRecord {
 	record.RoutePolicyID = strings.TrimSpace(record.RoutePolicyID)
 	record.AllowedProviders = normalizeAccessKeyValues(record.AllowedProviders, true)
 	record.AllowedModels = normalizeAccessKeyValues(record.AllowedModels, false)
+	bindings := make(map[string]string, len(record.ProviderKeyBindings))
+	for provider, keyName := range record.ProviderKeyBindings {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		keyName = strings.TrimSpace(keyName)
+		if provider != "" && keyName != "" {
+			bindings[provider] = keyName
+		}
+	}
+	if len(bindings) == 0 {
+		record.ProviderKeyBindings = nil
+	} else {
+		record.ProviderKeyBindings = bindings
+	}
 	if record.SubjectID == "" {
 		record.SubjectID = record.Name
 	}

@@ -16,13 +16,14 @@ type AccessKeyResolver func(ctx context.Context, accessKey string) (principal Au
 // SubjectType and SubjectID are intentionally separate from AccessKeyID because
 // multiple access keys may belong to the same billing subject.
 type AuthPrincipal struct {
-	AccessKeyID      string
-	AccountID        string
-	SubjectType      string
-	SubjectID        string
-	RoutePolicyID    string
-	AllowedProviders []string
-	AllowedModels    []string
+	AccessKeyID         string
+	AccountID           string
+	SubjectType         string
+	SubjectID           string
+	RoutePolicyID       string
+	AllowedProviders    []string
+	AllowedModels       []string
+	ProviderKeyBindings map[string]string
 }
 
 const (
@@ -168,6 +169,17 @@ func setPrincipal(c *gin.Context, principal AuthPrincipal) {
 	principal.RoutePolicyID = strings.TrimSpace(principal.RoutePolicyID)
 	principal.AllowedProviders = normalizeAllowedValues(principal.AllowedProviders, true)
 	principal.AllowedModels = normalizeAllowedValues(principal.AllowedModels, false)
+	if len(principal.ProviderKeyBindings) > 0 {
+		bindings := make(map[string]string, len(principal.ProviderKeyBindings))
+		for provider, keyName := range principal.ProviderKeyBindings {
+			provider = strings.ToLower(strings.TrimSpace(provider))
+			keyName = strings.TrimSpace(keyName)
+			if provider != "" && keyName != "" {
+				bindings[provider] = keyName
+			}
+		}
+		principal.ProviderKeyBindings = bindings
+	}
 	c.Set(ctxAuthPrincipal, principal)
 	if principal.AccessKeyID != "" {
 		c.Set(ctxAuthAccessKeyID, principal.AccessKeyID)

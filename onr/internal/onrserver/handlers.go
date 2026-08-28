@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/apitransform"
+	"github.com/r9s-ai/open-next-router/onr-core/pkg/keystore"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/requestcanon"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/requestid"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/requestvalidate"
@@ -94,7 +95,13 @@ func makeHandler(cfg *config.Config, st *state, pclient *proxy.Client, api strin
 			kval = uk
 		} else {
 			keys := st.Keys()
-			k, ok := keys.NextKey(provider)
+			var k *keystore.Key
+			var ok bool
+			if keyName := strings.TrimSpace(principal.ProviderKeyBindings[strings.ToLower(provider)]); keyName != "" {
+				k, ok = keys.KeyByName(provider, keyName)
+			} else {
+				k, ok = keys.NextKey(provider)
+			}
 			if !ok {
 				writeOpenAIError(c, requestIDHeaderKey, "missing_upstream_key", "no upstream key for provider: "+provider)
 				return
