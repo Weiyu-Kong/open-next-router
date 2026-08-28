@@ -408,4 +408,9 @@ identifier as the authorization source.
   - Confirm key revocation blocks both API requests and portal queries.
   - Confirm repeated provisioning requests do not duplicate the initial credit.
 
-Verification note: `gofmt` and `go test ./...` passed with Go 1.26.6 using `/tmp` Go caches.
+Verification note (2026-08-27): the root module and the independent `onr-core`
+module both passed their complete `go test ./...` suites with Go 1.26.6 and
+`/tmp` Go caches. This includes Redis/miniredis, Meterry/httptest, DSL provider
+validation, proxy, admin Web, provider usage extraction, and usage adapter
+tests. A live Meterry/Redis/provider deployment journey is still required for
+Step 12; local test doubles do not prove external service compatibility.
