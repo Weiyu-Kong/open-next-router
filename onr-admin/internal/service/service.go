@@ -20,6 +20,7 @@ type CreateAccessKeyInput struct {
 	Name, SubjectType, SubjectID    string
 	AccountID, RoutePolicyID        string
 	AllowedProviders, AllowedModels string
+	ProviderKeyBindings             map[string]string
 	ExpiresAt                       *time.Time
 	Metadata                        map[string]string
 }
@@ -160,18 +161,19 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		accountID = strings.TrimSpace(in.SubjectID)
 	}
 	rec := controlplane.AccessKeyRecord{
-		Name:             in.Name,
-		SecretHash:       s.cp.HashAccessKey(secret),
-		Status:           "pending",
-		SubjectType:      in.SubjectType,
-		SubjectID:        in.SubjectID,
-		AccountID:        accountID,
-		RoutePolicyID:    strings.TrimSpace(in.RoutePolicyID),
-		AllowedProviders: parseCommaList(in.AllowedProviders, true),
-		AllowedModels:    parseCommaList(in.AllowedModels, false),
-		ExpiresAt:        in.ExpiresAt,
-		Metadata:         in.Metadata,
-		Provisioning:     "pending",
+		Name:                in.Name,
+		SecretHash:          s.cp.HashAccessKey(secret),
+		Status:              "pending",
+		SubjectType:         in.SubjectType,
+		SubjectID:           in.SubjectID,
+		AccountID:           accountID,
+		RoutePolicyID:       strings.TrimSpace(in.RoutePolicyID),
+		AllowedProviders:    parseCommaList(in.AllowedProviders, true),
+		AllowedModels:       parseCommaList(in.AllowedModels, false),
+		ProviderKeyBindings: normalizeProviderKeyBindings(in.ProviderKeyBindings),
+		ExpiresAt:           in.ExpiresAt,
+		Metadata:            in.Metadata,
+		Provisioning:        "pending",
 	}
 	if e = s.cp.CreateAccessKey(ctx, rec); e != nil {
 		return "", e
@@ -193,6 +195,24 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		return secret, e
 	}
 	return secret, nil
+}
+
+func normalizeProviderKeyBindings(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(input))
+	for provider, keyName := range input {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		keyName = strings.TrimSpace(keyName)
+		if provider != "" && keyName != "" {
+			out[provider] = keyName
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // ProvisionAccessKey retries a pending Meterry setup without issuing a new

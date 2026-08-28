@@ -321,6 +321,8 @@ Durable State Complete, Automatic Reconciliation Pending
   `onr-core/pkg/ctyun`.
 - [x] Add the Ctyun provider DSL with explicit chat model mapping and streaming
   usage inclusion.
+- [x] Let administrators assign `provider_key_bindings` when creating an
+  Access Key in the Web UI; only opaque internal key names are returned.
 - [ ] Wire Ctyun monitor polling into the user/admin usage APIs. Its API returns
   time-bucket aggregates, not per-request records, so it must remain reporting
   data and must not create duplicate billing events.
@@ -424,6 +426,8 @@ shape and must not be documented as broader coverage.
   response normalization. Focused core tests, provider DSL validation, and the
   complete root `go test ./...` suite passed. Ctyun live API acceptance and
   monitor report wiring remain pending.
+- 2026-08-28: The administrator Web API and UI now accept and display explicit
+  Access Key provider-key bindings. Admin/service and integration tests passed.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 
