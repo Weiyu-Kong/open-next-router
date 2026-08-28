@@ -250,8 +250,8 @@ Concrete Integration Pending
   reconciliation events.
 - [ ] Define secure configuration for provider usage endpoints, credentials,
   internal key mapping, cursor/pagination, and polling windows.
-- [ ] Implement and test at least one concrete provider adapter against its real
-  response and pagination behavior.
+- [x] Implement and test the OpenRouter generation-detail adapter against a
+  realistic response fixture, including its explicit no-pagination limitation.
 - [ ] Persist polling checkpoints and overlap windows so delayed records are
   recovered safely.
 - [ ] Prove direct usage and provider polling do not double charge.
@@ -277,9 +277,10 @@ Concrete Integration Pending
 Work proceeds in small stages, and this file is updated after each completed
 stage. Each completed stage receives a dedicated Git commit.
 
-1. Configure and verify the first concrete provider usage API integration.
-2. Add durable reconciliation checkpoints, lag visibility, and no-double-charge
-   tests.
+1. Add secure runtime configuration and candidate persistence for the concrete
+   OpenRouter usage adapter.
+2. Add polling, durable reconciliation checkpoints, lag visibility, and
+   no-double-charge tests.
 3. Execute the full real-service journey and close the production-readiness
    acceptance criteria.
 
@@ -299,6 +300,9 @@ stage. Each completed stage receives a dedicated Git commit.
   a lost-success response from initial credit. The root module passed
   `go test ./...`; retries retained the one-time secret, activated the original
   key, and applied initial credit once.
+- 2026-08-28: a concrete OpenRouter generation-detail usage adapter passed
+  realistic HTTP response, server-owned authentication, request-ID integrity,
+  bounded-window, and normalization tests. The root module passed `go test ./...`.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 
