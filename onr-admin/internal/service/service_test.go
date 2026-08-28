@@ -166,11 +166,19 @@ func TestListAccessKeyMeterSummaries(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"account_id":"acct-meterry","currency":"USD","balance":"90","available_balance":"90"}`))
 		case strings.HasSuffix(r.URL.Path, "/usage/query"):
-			_, _ = w.Write([]byte(`{"rows":[{"dimensions":{"provider":"openai","model":"gpt-test"},"measures":{"quantity":"10"}}]}`))
+			var request types.UsageAnalyticsQueryRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode usage request: %v", err)
+			} else if len(request.GroupBy) != 1 || request.GroupBy[0] != "model" {
+				t.Errorf("usage group_by=%v, want [model]", request.GroupBy)
+			}
+			_, _ = w.Write([]byte(`{"rows":[{"dimensions":{"model":"gpt-test"},"measures":{"quantity":"10"}}]}`))
 		case strings.HasSuffix(r.URL.Path, "/usage/bills/query"):
 			var request types.UsageBillQueryRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Errorf("decode bill request: %v", err)
+			} else if len(request.GroupBy) != 1 || request.GroupBy[0] != "model" {
+				t.Errorf("bill group_by=%v, want [model]", request.GroupBy)
 			}
 			billTimezones = append(billTimezones, request.Timezone)
 			_, _ = w.Write([]byte(`{"rows":[{"dimensions":{"provider":"openai","model":"gpt-test"},"request_count":1,"amount":"1.25","metrics":{}}],"has_more":false}`))

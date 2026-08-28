@@ -477,7 +477,10 @@ func (s *Service) ListAccessKeyMeterSummaries(ctx context.Context, startTime, en
 			out = append(out, row)
 			continue
 		}
-		usage, usageErr := s.QueryAccessKeyUsage(ctx, rec, UserUsageQuery{StartTime: startTime, EndTime: endTime, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: []string{"provider", "model"}, Measures: []string{"quantity", "usage_event_count"}, Limit: 1000})
+		// Provider and internal key are routing dimensions, not customer billing
+		// identities. Keep administrator summaries aligned with the user view so
+		// manual provider changes do not split one model's history.
+		usage, usageErr := s.QueryAccessKeyUsage(ctx, rec, UserUsageQuery{StartTime: startTime, EndTime: endTime, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: []string{"model"}, Measures: []string{"quantity", "usage_event_count"}, Limit: 1000})
 		if usageErr != nil {
 			row.Error = "usage unavailable"
 		} else {
@@ -487,7 +490,7 @@ func (s *Service) ListAccessKeyMeterSummaries(ctx context.Context, startTime, en
 		if billingAccountID == "" {
 			billingAccountID = strings.TrimSpace(rec.AccountID)
 		}
-		bills, billErr := s.meterry.Query.BillForProject(ctx, s.cfg.Meterry.ProjectID, types.UsageBillQueryRequest{Timezone: "UTC", BillingAccountID: billingAccountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, StartTime: startTime, EndTime: endTime, GroupBy: []string{"provider", "model"}, Limit: 1000})
+		bills, billErr := s.meterry.Query.BillForProject(ctx, s.cfg.Meterry.ProjectID, types.UsageBillQueryRequest{Timezone: "UTC", BillingAccountID: billingAccountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, StartTime: startTime, EndTime: endTime, GroupBy: []string{"model"}, Limit: 1000})
 		if billErr != nil {
 			if row.Error == "" {
 				row.Error = "billing unavailable"

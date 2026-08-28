@@ -323,6 +323,8 @@ Durable State Complete, Automatic Reconciliation Pending
   usage inclusion.
 - [x] Let administrators assign `provider_key_bindings` when creating an
   Access Key in the Web UI; only opaque internal key names are returned.
+- [x] Align administrator usage and bill summaries with user-facing
+  `Access Key + model` aggregation so provider/key changes do not split history.
 - [ ] Wire Ctyun monitor polling into the user/admin usage APIs. Its API returns
   time-bucket aggregates, not per-request records, so it must remain reporting
   data and must not create duplicate billing events.
@@ -428,6 +430,9 @@ shape and must not be documented as broader coverage.
   monitor report wiring remain pending.
 - 2026-08-28: The administrator Web API and UI now accept and display explicit
   Access Key provider-key bindings. Admin/service and integration tests passed.
+- 2026-08-28: Administrator meter summaries were changed to group by `model`
+  only, matching the user portal and preserving model totals across manual
+  provider or internal-key changes. Tests assert the outgoing Meterry queries.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 
