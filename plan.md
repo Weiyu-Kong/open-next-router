@@ -390,6 +390,8 @@ identifier as the authorization source.
   - Support total usage and grouping by model and provider.
   - Return request count, input tokens, output tokens, cache tokens when available, and charged amount.
   - Keep provider and internal-key dimensions available to administrators while suppressing them from the default user response.
+  - Added `/api/admin/meter/access-keys` for cross-account balances and model/provider usage and billing summaries.
+  - Added a Redis + Meterry SDK integration-style test for the administrator cross-account summary path.
   - Show data freshness and pending billing-event information because ingestion is asynchronous.
 - [x] Step 11: add the first Access Key user portal.
   - Added `/user` with Access Key login and logout screens.

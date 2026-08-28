@@ -277,6 +277,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/admin/access-keys/migrate/dry-run", s.handleAdminMigrate)
 	api.HandleFunc("/api/admin/access-keys/migrate", s.handleAdminMigrate)
 	api.HandleFunc("/api/admin/access-keys/", s.handleAdminAccessKey)
+	api.HandleFunc("/api/admin/meter/access-keys", s.handleAdminMeterAccessKeys)
 	userAPI := http.NewServeMux()
 	userAPI.HandleFunc("/api/user/login", s.handleUserLogin)
 	userAPI.HandleFunc("/api/user/logout", s.handleUserLogout)
@@ -1027,6 +1028,30 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	o := s.service.Overview(r.Context())
 	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "redis": map[string]any{"enabled": o.RedisEnabled, "reachable": o.RedisReachable, "error": o.RedisError, "key_prefix": o.KeyPrefix, "access_key_mode": o.AccessKeyMode}, "meterry": map[string]any{"enabled": o.MeterryEnabled, "configured": o.MeterryConfigured, "reachable": o.MeterryReachable, "error": o.MeterryError, "project_id": o.ProjectID, "extractor_rule_set": o.ExtractorRuleSet}, "billing": map[string]any{"pending": o.Pending, "dead_letter": o.DeadLetter, "error": o.BillingError, "consumer_group": o.ConsumerGroup, "consumer_name": o.ConsumerName, "max_attempts": o.MaxAttempts}, "balance": map[string]any{"failure_mode": o.FailureMode, "cache_ttl_ms": o.BalanceCacheTTL.Milliseconds(), "negative_cache_ttl_ms": o.NegativeCacheTTL.Milliseconds()}, "refreshed_at": o.RefreshedAt})
+}
+
+func (s *Server) handleAdminMeterAccessKeys(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if s.service == nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "admin service is not configured"})
+		return
+	}
+	now := time.Now().Unix()
+	start := parseUnixQuery(r.URL.Query().Get("start"), now-7*24*60*60)
+	end := parseUnixQuery(r.URL.Query().Get("end"), now)
+	if start < now-31*24*60*60 || end <= start || end-start > 31*24*60*60 {
+		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "meter range must be within 31 days"})
+		return
+	}
+	rows, err := s.service.ListAccessKeyMeterSummaries(r.Context(), start, end)
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "meter summary unavailable"})
+		return
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "access_keys": rows})
 }
 
 func (s *Server) handleAdminAccessKeys(w http.ResponseWriter, r *http.Request) {

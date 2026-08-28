@@ -41,6 +41,15 @@ type UserUsageQuery struct {
 	Limit      int
 }
 
+type AccessKeyMeterSummary struct {
+	AccessKeyID string                             `json:"access_key_id"`
+	Status      string                             `json:"status"`
+	Balance     *types.VirtualWalletAmountSnapshot `json:"balance,omitempty"`
+	Usage       []types.UsageAnalyticsRow          `json:"usage,omitempty"`
+	Bills       []types.UsageBillRow               `json:"bills,omitempty"`
+	Error       string                             `json:"error,omitempty"`
+}
+
 type MigrationReport struct {
 	Total, WouldMigrate, Migrated int
 	Conflicts, Skipped            []string
@@ -384,6 +393,50 @@ func (s *Service) QueryAccessKeyBills(ctx context.Context, rec controlplane.Acce
 		Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, StartTime: startTime, EndTime: endTime,
 		GroupBy: []string{"model"}, Limit: limit,
 	})
+}
+
+// ListAccessKeyMeterSummaries provides an administrator-only cross-account
+// view. A failure for one account is returned on that row so the remaining
+// accounts stay visible.
+func (s *Service) ListAccessKeyMeterSummaries(ctx context.Context, startTime, endTime int64) ([]AccessKeyMeterSummary, error) {
+	records, err := s.ListAccessKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AccessKeyMeterSummary, 0, len(records))
+	for _, rec := range records {
+		row := AccessKeyMeterSummary{AccessKeyID: rec.Name, Status: rec.Status}
+		if rec.Status != "active" {
+			out = append(out, row)
+			continue
+		}
+		row.Balance, err = s.ReadAccessKeyBalance(ctx, rec)
+		if err != nil {
+			row.Error = "balance unavailable"
+			out = append(out, row)
+			continue
+		}
+		usage, usageErr := s.QueryAccessKeyUsage(ctx, rec, UserUsageQuery{StartTime: startTime, EndTime: endTime, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: []string{"provider", "model"}, Measures: []string{"quantity", "usage_event_count"}, Limit: 1000})
+		if usageErr != nil {
+			row.Error = "usage unavailable"
+		} else {
+			row.Usage = usage.Rows
+		}
+		billingAccountID := strings.TrimSpace(rec.MeterryAccountID)
+		if billingAccountID == "" {
+			billingAccountID = strings.TrimSpace(rec.AccountID)
+		}
+		bills, billErr := s.meterry.Query.BillForProject(ctx, s.cfg.Meterry.ProjectID, types.UsageBillQueryRequest{Timezone: "UTC", BillingAccountID: billingAccountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, StartTime: startTime, EndTime: endTime, GroupBy: []string{"provider", "model"}, Limit: 1000})
+		if billErr != nil {
+			if row.Error == "" {
+				row.Error = "billing unavailable"
+			}
+		} else {
+			row.Bills = bills.Rows
+		}
+		out = append(out, row)
+	}
+	return out, nil
 }
 func (s *Service) RotateAccessKey(ctx context.Context, name string) (string, error) {
 	if s.cp == nil {
