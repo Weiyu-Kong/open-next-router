@@ -185,10 +185,12 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		return secret, nil
 	}
 	if s.meterry == nil {
-		return "", fmt.Errorf("Meterry provisioning is not configured; retry the pending access key after configuration")
+		e = fmt.Errorf("Meterry provisioning is not configured; retry the pending access key after configuration")
+		s.recordProvisioningFailure(ctx, rec, e)
+		return secret, e
 	}
 	if e = s.finishAccessKeyProvisioning(ctx, rec); e != nil {
-		return "", e
+		return secret, e
 	}
 	return secret, nil
 }
@@ -216,13 +218,42 @@ func (s *Service) ProvisionAccessKey(ctx context.Context, name string) error {
 func (s *Service) finishAccessKeyProvisioning(ctx context.Context, rec controlplane.AccessKeyRecord) error {
 	accountID, err := s.provisionMeterry(ctx, rec)
 	if err != nil {
+		s.recordProvisioningFailure(ctx, rec, err)
 		return err
 	}
 	rec.MeterryAccountID = accountID
 	rec.AccountID = accountID
 	rec.Provisioning = "ready"
+	rec.ProvisioningError = ""
 	rec.Status = "active"
 	return s.cp.PutAccessKey(ctx, rec)
+}
+
+func (s *Service) recordProvisioningFailure(ctx context.Context, rec controlplane.AccessKeyRecord, cause error) {
+	rec.Status = "pending"
+	rec.Provisioning = "failed"
+	rec.ProvisioningError = provisioningFailureMessage(cause)
+	_ = s.cp.PutAccessKey(ctx, rec)
+}
+
+func provisioningFailureMessage(cause error) string {
+	message := cause.Error()
+	for _, stage := range []string{
+		"list Meterry accounts",
+		"create Meterry account",
+		"bind Meterry subject",
+		"list Meterry wallets",
+		"create Meterry wallet",
+		"credit Meterry initial balance",
+	} {
+		if strings.HasPrefix(message, stage+":") {
+			return stage + " failed"
+		}
+	}
+	if strings.HasPrefix(message, "Meterry provisioning is not configured") {
+		return "Meterry provisioning is not configured"
+	}
+	return "Meterry provisioning failed"
 }
 
 func (s *Service) provisionMeterry(ctx context.Context, rec controlplane.AccessKeyRecord) (string, error) {

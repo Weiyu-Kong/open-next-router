@@ -16,6 +16,145 @@ import (
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
 )
 
+type provisioningBackend struct {
+	failAt         string
+	failed         bool
+	accountCreated bool
+	walletCreated  bool
+	creditCalls    int
+	creditsApplied map[string]int
+}
+
+func (b *provisioningBackend) fail(w http.ResponseWriter, operation string) bool {
+	if b.failAt != operation || b.failed {
+		return false
+	}
+	b.failed = true
+	http.Error(w, "injected failure", http.StatusServiceUnavailable)
+	return true
+}
+
+func (b *provisioningBackend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/accounts"):
+		if b.fail(w, "list_accounts") {
+			return
+		}
+		if b.accountCreated {
+			_, _ = w.Write([]byte(`{"accounts":[{"id":"acct-a","name":"onr-access-key:key-a"}]}`))
+		} else {
+			_, _ = w.Write([]byte(`{"accounts":[]}`))
+		}
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/accounts"):
+		if b.fail(w, "create_account") {
+			return
+		}
+		b.accountCreated = true
+		_, _ = w.Write([]byte(`{"id":"acct-a","name":"onr-access-key:key-a"}`))
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/account-subjects"):
+		if b.fail(w, "bind_subject") {
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"binding-a","account_id":"acct-a","subject_type":"api_key","subject_id":"subject-a"}`))
+	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/wallets"):
+		if b.fail(w, "list_wallets") {
+			return
+		}
+		if b.walletCreated {
+			_, _ = w.Write([]byte(`{"wallets":[{"id":"wallet-a","account_id":"acct-a","currency":"USD"}]}`))
+		} else {
+			_, _ = w.Write([]byte(`{"wallets":[]}`))
+		}
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/wallets"):
+		if b.fail(w, "create_wallet") {
+			return
+		}
+		b.walletCreated = true
+		_, _ = w.Write([]byte(`{"id":"wallet-a","account_id":"acct-a","currency":"USD"}`))
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/wallets/credit"):
+		if b.fail(w, "credit_before") {
+			return
+		}
+		var request types.CreditWalletRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		b.creditCalls++
+		if b.creditsApplied == nil {
+			b.creditsApplied = map[string]int{}
+		}
+		if b.creditsApplied[request.IdempotencyKey] == 0 {
+			b.creditsApplied[request.IdempotencyKey] = 1
+		}
+		if b.fail(w, "credit_after") {
+			return
+		}
+		_, _ = w.Write([]byte(`{"wallet":{"id":"wallet-a","account_id":"acct-a","currency":"USD"},"ledger_entry":{"currency":"USD","amount":"100","idempotency_key":"onr:initial-credit:key-a"}}`))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func newProvisioningService(t *testing.T, backend http.Handler) (*Service, *controlplane.Client) {
+	t.Helper()
+	meterryServer := httptest.NewServer(backend)
+	t.Cleanup(meterryServer.Close)
+	redisServer := miniredis.RunT(t)
+	cp, err := controlplane.New(controlplane.Config{Addr: "redis://" + redisServer.Addr(), KeyPrefix: "test", AccessKeyHashSecret: "secret", OperationTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cp.Close() })
+	meterryClient, err := sdk.NewClient(sdk.Config{BaseURL: meterryServer.URL, APIKey: "server-secret", HTTPClient: meterryServer.Client()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Meterry.Enabled = true
+	cfg.Meterry.ProjectID = "project-a"
+	cfg.Meterry.InitialCredit = "100"
+	cfg.Meterry.BalanceEnforcement.Currency = "USD"
+	return &Service{cfg: cfg, cp: cp, meterry: meterryClient}, cp
+}
+
+func TestAccessKeyProvisioningRecoversFromPartialFailures(t *testing.T) {
+	for _, failure := range []string{"list_accounts", "create_account", "bind_subject", "list_wallets", "create_wallet", "credit_before", "credit_after"} {
+		t.Run(failure, func(t *testing.T) {
+			backend := &provisioningBackend{failAt: failure}
+			service, cp := newProvisioningService(t, backend)
+			secret, err := service.CreateAccessKey(t.Context(), CreateAccessKeyInput{Name: "key-a", SubjectType: "api_key", SubjectID: "subject-a", AccountID: "account-a"})
+			if err == nil || secret == "" {
+				t.Fatalf("initial create=(secret=%q, err=%v), want one-time secret and error", secret, err)
+			}
+			record, getErr := cp.GetAccessKeyRecord(t.Context(), "key-a")
+			if getErr != nil || record == nil || record.Status != "pending" || record.Provisioning != "failed" || record.ProvisioningError == "" {
+				t.Fatalf("failed record=(%+v,%v)", record, getErr)
+			}
+			if authenticated, lookupErr := cp.LookupAccessKey(t.Context(), secret); lookupErr != nil || authenticated != nil {
+				t.Fatalf("pending key authentication=(%+v,%v), want nil,nil", authenticated, lookupErr)
+			}
+			if err := service.ProvisionAccessKey(t.Context(), "key-a"); err != nil {
+				t.Fatalf("retry provisioning: %v", err)
+			}
+			record, getErr = cp.GetAccessKeyRecord(t.Context(), "key-a")
+			if getErr != nil || record == nil || record.Status != "active" || record.Provisioning != "ready" || record.ProvisioningError != "" || record.MeterryAccountID != "acct-a" {
+				t.Fatalf("ready record=(%+v,%v)", record, getErr)
+			}
+			if authenticated, lookupErr := cp.LookupAccessKey(t.Context(), secret); lookupErr != nil || authenticated == nil {
+				t.Fatalf("active key authentication=(%+v,%v)", authenticated, lookupErr)
+			}
+			if len(backend.creditsApplied) != 1 || backend.creditsApplied["onr:initial-credit:key-a"] != 1 {
+				t.Fatalf("credits applied=%v", backend.creditsApplied)
+			}
+			if failure == "credit_after" && backend.creditCalls != 2 {
+				t.Fatalf("credit calls=%d, want retry with same idempotency key", backend.creditCalls)
+			}
+		})
+	}
+}
+
 func TestListAccessKeyMeterSummaries(t *testing.T) {
 	var billTimezones []string
 	meterryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -179,6 +179,7 @@ type adminAccessKeyInput struct {
 }
 type adminAccessKeyResponse struct {
 	OK      bool   `json:"ok"`
+	Pending bool   `json:"pending,omitempty"`
 	Record  any    `json:"record,omitempty"`
 	Records any    `json:"records,omitempty"`
 	Secret  string `json:"secret,omitempty"`
@@ -1146,6 +1147,10 @@ func (s *Server) handleAdminAccessKeys(w http.ResponseWriter, r *http.Request) {
 			Metadata:         in.Metadata,
 		})
 		if e != nil {
+			if secret != "" {
+				writeJSONAny(w, http.StatusAccepted, adminAccessKeyResponse{OK: true, Pending: true, Secret: secret, Error: e.Error()})
+				return
+			}
 			writeJSONAny(w, http.StatusServiceUnavailable, adminAccessKeyResponse{Error: e.Error()})
 			return
 		}
@@ -1164,6 +1169,7 @@ func safeAccessKey(v controlplane.AccessKeyRecord) map[string]any {
 		"account_id":         v.AccountID,
 		"meterry_account_id": v.MeterryAccountID,
 		"provisioning":       v.Provisioning,
+		"provisioning_error": v.ProvisioningError,
 		"route_policy_id":    v.RoutePolicyID,
 		"allowed_providers":  v.AllowedProviders,
 		"allowed_models":     v.AllowedModels,

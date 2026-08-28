@@ -43,21 +43,22 @@ type Client struct {
 }
 
 type AccessKeyRecord struct {
-	Name             string            `json:"name"`
-	SecretHash       string            `json:"secret_hash"`
-	Status           string            `json:"status"`
-	SubjectType      string            `json:"subject_type"`
-	SubjectID        string            `json:"subject_id"`
-	AccountID        string            `json:"account_id,omitempty"`
-	MeterryAccountID string            `json:"meterry_account_id,omitempty"`
-	Provisioning     string            `json:"provisioning,omitempty"`
-	RoutePolicyID    string            `json:"route_policy_id,omitempty"`
-	AllowedProviders []string          `json:"allowed_providers,omitempty"`
-	AllowedModels    []string          `json:"allowed_models,omitempty"`
-	CreatedAt        time.Time         `json:"created_at"`
-	ExpiresAt        *time.Time        `json:"expires_at,omitempty"`
-	Version          int64             `json:"version"`
-	Metadata         map[string]string `json:"metadata,omitempty"`
+	Name              string            `json:"name"`
+	SecretHash        string            `json:"secret_hash"`
+	Status            string            `json:"status"`
+	SubjectType       string            `json:"subject_type"`
+	SubjectID         string            `json:"subject_id"`
+	AccountID         string            `json:"account_id,omitempty"`
+	MeterryAccountID  string            `json:"meterry_account_id,omitempty"`
+	Provisioning      string            `json:"provisioning,omitempty"`
+	ProvisioningError string            `json:"provisioning_error,omitempty"`
+	RoutePolicyID     string            `json:"route_policy_id,omitempty"`
+	AllowedProviders  []string          `json:"allowed_providers,omitempty"`
+	AllowedModels     []string          `json:"allowed_models,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+	ExpiresAt         *time.Time        `json:"expires_at,omitempty"`
+	Version           int64             `json:"version"`
+	Metadata          map[string]string `json:"metadata,omitempty"`
 }
 
 type SubjectState struct {
@@ -240,18 +241,46 @@ func (c *Client) PutAccessKey(ctx context.Context, record AccessKeyRecord) error
 	if err != nil {
 		return err
 	}
-	return c.withTimeout(ctx, func(ctx context.Context) error {
-		pipe := c.rdb.TxPipeline()
-		pipe.Set(ctx, c.accessKeyRecordKey(record.Name), raw, 0)
-		pipe.HSet(ctx, c.accessKeyIndexKey(), record.SecretHash, record.Name)
-		if record.Status == "active" {
-			pipe.HSet(ctx, c.accessKeyAccountIndexKey(), record.AccountID, record.Name)
-		} else {
-			pipe.HDel(ctx, c.accessKeyAccountIndexKey(), record.AccountID)
-		}
-		_, err := pipe.Exec(ctx)
+	const putScript = `
+local owner = redis.call('hget', KEYS[3], ARGV[5])
+if ARGV[4] == 'active' and owner and owner ~= ARGV[3] then return -2 end
+local previous = redis.call('get', KEYS[1])
+if previous then
+  local old = cjson.decode(previous)
+  if old.secret_hash and old.secret_hash ~= ARGV[2] and redis.call('hget', KEYS[2], old.secret_hash) == ARGV[3] then
+    redis.call('hdel', KEYS[2], old.secret_hash)
+  end
+  if old.account_id and old.account_id ~= ARGV[5] and redis.call('hget', KEYS[3], old.account_id) == ARGV[3] then
+    redis.call('hdel', KEYS[3], old.account_id)
+  end
+end
+redis.call('set', KEYS[1], ARGV[1])
+redis.call('hset', KEYS[2], ARGV[2], ARGV[3])
+if ARGV[4] == 'active' then
+  redis.call('hset', KEYS[3], ARGV[5], ARGV[3])
+elseif redis.call('hget', KEYS[3], ARGV[5]) == ARGV[3] then
+  redis.call('hdel', KEYS[3], ARGV[5])
+end
+return 1`
+	var result int64
+	err = c.withTimeout(ctx, func(ctx context.Context) error {
+		var err error
+		result, err = c.rdb.Eval(ctx, putScript,
+			[]string{c.accessKeyRecordKey(record.Name), c.accessKeyIndexKey(), c.accessKeyAccountIndexKey()},
+			raw, record.SecretHash, record.Name, record.Status, record.AccountID,
+		).Int64()
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	if result == -2 {
+		return fmt.Errorf("an active access key already exists for account %q", record.AccountID)
+	}
+	if result != 1 {
+		return fmt.Errorf("unexpected access key update result %d", result)
+	}
+	return nil
 }
 
 func (c *Client) CreateAccessKey(ctx context.Context, record AccessKeyRecord) error {

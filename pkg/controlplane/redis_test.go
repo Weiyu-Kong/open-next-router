@@ -136,6 +136,31 @@ func TestActiveAccessKeyIsUniquePerAccount(t *testing.T) {
 	}
 }
 
+func TestPendingAccessKeysCannotActivateForSameAccount(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	first := AccessKeyRecord{Name: "key-a", SecretHash: c.HashAccessKey("secret-a"), Status: "pending", SubjectType: "api_key", SubjectID: "subject-a", AccountID: "account-a"}
+	second := AccessKeyRecord{Name: "key-b", SecretHash: c.HashAccessKey("secret-b"), Status: "pending", SubjectType: "api_key", SubjectID: "subject-b", AccountID: "account-a"}
+	if err := c.CreateAccessKey(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CreateAccessKey(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	first.Status = "active"
+	if err := c.PutAccessKey(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	second.Status = "active"
+	if err := c.PutAccessKey(ctx, second); err == nil {
+		t.Fatal("expected second pending key activation to be rejected")
+	}
+	record, err := c.GetAccessKeyRecord(ctx, "key-b")
+	if err != nil || record == nil || record.Status != "pending" {
+		t.Fatalf("second record=(%+v,%v), want pending", record, err)
+	}
+}
+
 func TestGetAccessKeyRecordNormalizesLegacyJSON(t *testing.T) {
 	c := newTestClient(t)
 	raw, err := json.Marshal(AccessKeyRecord{

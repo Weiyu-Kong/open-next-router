@@ -257,6 +257,52 @@ func TestUserLoginRateLimit(t *testing.T) {
 	}
 }
 
+func TestAdminCreateAccessKeyReturnsSecretWhenProvisioningIsPending(t *testing.T) {
+	providersDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(providersDir, "openai.conf"), []byte(validOpenAIConf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meterryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "injected provisioning failure", http.StatusServiceUnavailable)
+	}))
+	defer meterryServer.Close()
+	redisServer := miniredis.RunT(t)
+	cfgPath := filepath.Join(t.TempDir(), "onr.yaml")
+	cfg := "meterry:\n  enabled: true\n  base_url: " + meterryServer.URL + "\n  project_id: project-a\n  api_key: test-key\n  extractor_rule_set_id: test-rules\n  initial_credit: '100'\nredis:\n  enabled: true\n  addr: redis://" + redisServer.Addr() + "\n  access_key_hash_secret: test-secret\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := newServerWithOptions(providersDir, t.TempDir(), defaultAPIBaseURL, cfgPath, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/access-keys", strings.NewReader(`{"name":"key-a","subject_type":"api_key","subject_id":"subject-a"}`))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+	var body struct {
+		OK      bool   `json:"ok"`
+		Pending bool   `json:"pending"`
+		Secret  string `json:"secret"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.OK || !body.Pending || body.Secret == "" || body.Error == "" {
+		t.Fatalf("response=%+v", body)
+	}
+	record, err := srv.service.GetAccessKey(t.Context(), "key-a")
+	if err != nil || record == nil || record.Status != "pending" || record.Provisioning != "failed" {
+		t.Fatalf("pending record=(%+v,%v)", record, err)
+	}
+}
+
 func TestSaveProviderRequiresValidationSuccess(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(dir, 0o750); err != nil {

@@ -204,7 +204,12 @@ Production Verification Pending
 - [x] Preserve account and wallet identity during key rotation.
 - [x] Add retryable provisioning and administrator credit/debit operations.
 - [x] Add administrator balance/limit snapshots.
-- [ ] Add failure-injection tests for every partial provisioning boundary.
+- [x] Add local failure-injection tests for account lookup/creation, subject
+  binding, wallet lookup/creation, initial credit, and lost credit responses.
+- [x] Return the one-time secret with a `202 Accepted` pending result when
+  provisioning fails after the Redis key is created, and expose a retry action.
+- [x] Recheck one-active-key-per-account atomically when a pending key becomes
+  active.
 - [ ] Verify provisioning and retries against a production-compatible Meterry
   deployment.
 
@@ -272,11 +277,10 @@ Concrete Integration Pending
 Work proceeds in small stages, and this file is updated after each completed
 stage. Each completed stage receives a dedicated Git commit.
 
-1. Add provisioning failure-injection tests.
-2. Configure and verify the first concrete provider usage API integration.
-3. Add durable reconciliation checkpoints, lag visibility, and no-double-charge
+1. Configure and verify the first concrete provider usage API integration.
+2. Add durable reconciliation checkpoints, lag visibility, and no-double-charge
    tests.
-4. Execute the full real-service journey and close the production-readiness
+3. Execute the full real-service journey and close the production-readiness
    acceptance criteria.
 
 ## 7. Verification Record
@@ -291,6 +295,10 @@ stage. Each completed stage receives a dedicated Git commit.
 - 2026-08-28: the root module passed `go test ./...` after shared time-range,
   IANA timezone, and currency metadata support was added to all user meter
   queries. The embedded portal assets and JavaScript syntax were also checked.
+- 2026-08-28: provisioning failure injection covered every Meterry boundary and
+  a lost-success response from initial credit. The root module passed
+  `go test ./...`; retries retained the one-time secret, activated the original
+  key, and applied initial credit once.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 
