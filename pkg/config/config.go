@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -141,6 +142,52 @@ type RedisConfig struct {
 	AccessKeyHashSecret  string `yaml:"access_key_hash_secret"`
 }
 
+// ProviderUsageConfig controls server-side provider usage reconciliation.
+// Provider credentials are accepted only through environment overrides and are
+// never intended to be persisted in a configuration file or Redis.
+type ProviderUsageConfig struct {
+	Enabled          bool                  `yaml:"enabled"`
+	PollIntervalMs   int                   `yaml:"poll_interval_ms"`
+	CandidateLeaseMs int                   `yaml:"candidate_lease_ms"`
+	OpenRouter       OpenRouterUsageConfig `yaml:"openrouter"`
+}
+
+type OpenRouterUsageConfig struct {
+	Enabled          bool     `yaml:"enabled"`
+	Mode             string   `yaml:"mode"`
+	Endpoint         string   `yaml:"endpoint"`
+	RequestTimeoutMs int      `yaml:"request_timeout_ms"`
+	InternalKeyIDs   []string `yaml:"internal_key_ids"`
+	APIKey           string   `yaml:"-" json:"-"`
+}
+
+func (c *OpenRouterUsageConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawConfig struct {
+		Enabled          bool     `yaml:"enabled"`
+		Mode             string   `yaml:"mode"`
+		Endpoint         string   `yaml:"endpoint"`
+		RequestTimeoutMs int      `yaml:"request_timeout_ms"`
+		InternalKeyIDs   []string `yaml:"internal_key_ids"`
+	}
+	if value.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(value.Content); i += 2 {
+			if strings.TrimSpace(value.Content[i].Value) == "api_key" {
+				return errors.New("provider_usage.openrouter.api_key is forbidden in YAML; use ONR_OPENROUTER_USAGE_API_KEY")
+			}
+		}
+	}
+	var raw rawConfig
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	c.Enabled = raw.Enabled
+	c.Mode = raw.Mode
+	c.Endpoint = raw.Endpoint
+	c.RequestTimeoutMs = raw.RequestTimeoutMs
+	c.InternalKeyIDs = raw.InternalKeyIDs
+	return nil
+}
+
 type Config struct {
 	Server struct {
 		Listen         string `yaml:"listen"`
@@ -202,6 +249,7 @@ type Config struct {
 	UsageEstimation usageestimate.Config `yaml:"usage_estimation"`
 	Meterry         MeterryConfig        `yaml:"meterry"`
 	Redis           RedisConfig          `yaml:"redis"`
+	ProviderUsage   ProviderUsageConfig  `yaml:"provider_usage"`
 
 	TrafficDump struct {
 		Enabled     bool     `yaml:"enabled"`
@@ -326,8 +374,28 @@ func applyDefaults(cfg *Config) {
 	usageestimate.ApplyDefaults(&cfg.UsageEstimation)
 	applyMeterryDefaults(&cfg.Meterry)
 	applyRedisDefaults(&cfg.Redis)
+	applyProviderUsageDefaults(&cfg.ProviderUsage)
 	applyTrafficDumpDefaults(cfg)
 	applyLoggingDefaults(&cfg.Logging)
+}
+
+func applyProviderUsageDefaults(cfg *ProviderUsageConfig) {
+	if cfg.PollIntervalMs <= 0 {
+		cfg.PollIntervalMs = 60000
+	}
+	if cfg.CandidateLeaseMs <= 0 {
+		cfg.CandidateLeaseMs = 30000
+	}
+	if strings.TrimSpace(cfg.OpenRouter.Endpoint) == "" {
+		cfg.OpenRouter.Endpoint = "https://openrouter.ai/api/v1/generation"
+	}
+	if cfg.OpenRouter.RequestTimeoutMs <= 0 {
+		cfg.OpenRouter.RequestTimeoutMs = 5000
+	}
+	if strings.TrimSpace(cfg.OpenRouter.Mode) == "" {
+		cfg.OpenRouter.Mode = "authoritative"
+	}
+	cfg.OpenRouter.InternalKeyIDs = normalizeStringList(cfg.OpenRouter.InternalKeyIDs)
 }
 
 func applyRedisDefaults(cfg *RedisConfig) {
@@ -435,8 +503,35 @@ func applyEnvOverrides(cfg *Config) {
 	applyProviderProxyEnvOverrides(cfg)
 	applyEnvMeterryOverrides(cfg)
 	applyEnvRedisOverrides(cfg)
+	applyEnvProviderUsageOverrides(cfg)
 	applyEnvTrafficDumpOverrides(cfg)
 	applyEnvLoggingOverrides(cfg)
+}
+
+func applyEnvProviderUsageOverrides(cfg *Config) {
+	cfg.ProviderUsage.Enabled = envBool("ONR_PROVIDER_USAGE_ENABLED", cfg.ProviderUsage.Enabled)
+	if n, ok := envInt("ONR_PROVIDER_USAGE_POLL_INTERVAL_MS"); ok && n > 0 {
+		cfg.ProviderUsage.PollIntervalMs = n
+	}
+	if n, ok := envInt("ONR_PROVIDER_USAGE_CANDIDATE_LEASE_MS"); ok && n > 0 {
+		cfg.ProviderUsage.CandidateLeaseMs = n
+	}
+	cfg.ProviderUsage.OpenRouter.Enabled = envBool("ONR_OPENROUTER_USAGE_ENABLED", cfg.ProviderUsage.OpenRouter.Enabled)
+	if v := strings.TrimSpace(os.Getenv("ONR_OPENROUTER_USAGE_MODE")); v != "" {
+		cfg.ProviderUsage.OpenRouter.Mode = v
+	}
+	if v := strings.TrimSpace(os.Getenv("ONR_OPENROUTER_USAGE_ENDPOINT")); v != "" {
+		cfg.ProviderUsage.OpenRouter.Endpoint = v
+	}
+	if n, ok := envInt("ONR_OPENROUTER_USAGE_REQUEST_TIMEOUT_MS"); ok && n > 0 {
+		cfg.ProviderUsage.OpenRouter.RequestTimeoutMs = n
+	}
+	if v := strings.TrimSpace(os.Getenv("ONR_OPENROUTER_USAGE_INTERNAL_KEY_IDS")); v != "" {
+		cfg.ProviderUsage.OpenRouter.InternalKeyIDs = normalizeStringList(strings.Split(v, ","))
+	}
+	if v := strings.TrimSpace(os.Getenv("ONR_OPENROUTER_USAGE_API_KEY")); v != "" {
+		cfg.ProviderUsage.OpenRouter.APIKey = v
+	}
 }
 
 func applyEnvRedisOverrides(cfg *Config) {
@@ -665,6 +760,58 @@ func validate(cfg *Config) error {
 	}
 	if err := validateRedis(&cfg.Redis); err != nil {
 		return err
+	}
+	if err := validateProviderUsage(&cfg.ProviderUsage, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateProviderUsage(cfg *ProviderUsageConfig, root *Config) error {
+	if !cfg.Enabled && !cfg.OpenRouter.Enabled {
+		return nil
+	}
+	if !root.Meterry.Enabled {
+		return errors.New("provider_usage requires meterry.enabled=true")
+	}
+	if !root.Redis.Enabled {
+		return errors.New("provider_usage requires redis.enabled=true")
+	}
+	if cfg.PollIntervalMs <= 0 {
+		return errors.New("provider_usage.poll_interval_ms must be > 0")
+	}
+	if cfg.CandidateLeaseMs <= 0 {
+		return errors.New("provider_usage.candidate_lease_ms must be > 0")
+	}
+	if cfg.Enabled && !cfg.OpenRouter.Enabled {
+		return errors.New("provider_usage.enabled requires at least one enabled provider adapter")
+	}
+	if cfg.OpenRouter.Enabled {
+		if !cfg.Enabled {
+			return errors.New("provider_usage.openrouter.enabled requires provider_usage.enabled=true")
+		}
+		cfg.OpenRouter.Mode = strings.ToLower(strings.TrimSpace(cfg.OpenRouter.Mode))
+		if cfg.OpenRouter.Mode != "authoritative" {
+			return errors.New("provider_usage.openrouter.mode must be authoritative")
+		}
+		if strings.TrimSpace(cfg.OpenRouter.APIKey) == "" {
+			return errors.New("provider_usage.openrouter.api_key must be supplied by ONR_OPENROUTER_USAGE_API_KEY")
+		}
+		u, err := url.Parse(strings.TrimSpace(cfg.OpenRouter.Endpoint))
+		if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return errors.New("provider_usage.openrouter.endpoint must be an absolute HTTP(S) URL")
+		}
+		if cfg.OpenRouter.RequestTimeoutMs <= 0 {
+			return errors.New("provider_usage.openrouter.request_timeout_ms must be > 0")
+		}
+		if len(cfg.OpenRouter.InternalKeyIDs) == 0 {
+			return errors.New("provider_usage.openrouter.internal_key_ids must contain at least one opaque key ID")
+		}
+		for _, id := range cfg.OpenRouter.InternalKeyIDs {
+			if strings.ContainsAny(id, "\r\n") {
+				return errors.New("provider_usage.openrouter.internal_key_ids must not contain newlines")
+			}
+		}
 	}
 	return nil
 }
@@ -913,6 +1060,23 @@ func normalizeProviderStringMap(in map[string]string) map[string]string {
 			continue
 		}
 		out[key] = val
+	}
+	return out
+}
+
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, raw := range values {
+		value := strings.TrimSpace(raw)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
 	return out
 }

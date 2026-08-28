@@ -282,8 +282,8 @@ Verification Pending
   selection shared by usage, bills, and request history.
 - [ ] Confirm all empty, loading, partial-failure, and narrow-screen states.
 
-### Stage 6: Provider Usage APIs and Reconciliation - Correlation DSL Complete,
-Automatic Reconciliation Pending
+### Stage 6: Provider Usage APIs and Reconciliation - Correlation DSL and
+Durable State Complete, Automatic Reconciliation Pending
 
 - [x] Define a provider-neutral bounded usage adapter contract.
 - [x] Add a generic server-configured HTTP JSON adapter.
@@ -295,10 +295,10 @@ Automatic Reconciliation Pending
   response JSON, including parsing, validation, documentation, semantic tests,
   and provider-directory validation. Initial support is non-streaming only
   unless SSE correlation is separately specified and tested.
-- [ ] Add secure runtime configuration for provider usage mode, endpoint,
+- [x] Add secure runtime configuration for provider usage mode, endpoint,
   internal key mapping, cursor/pagination behavior, polling/lease intervals,
   and environment-sourced credentials.
-- [ ] Persist durable reconciliation candidates containing opaque upstream key
+- [x] Persist durable reconciliation candidates containing opaque upstream key
   identity, provider request ID, ONR request ID, account scope, attempts, lease,
   and retry state, but no provider secret.
 - [ ] Persist polling checkpoints and overlap windows so delayed records are
@@ -386,6 +386,13 @@ shape and must not be documented as broader coverage.
   runtime tests cover response-header priority, missing/invalid/non-string
   values, and extraction before downstream JSON deletion. The independent
   `onr-core` and root modules both passed complete `go test ./...` suites.
+- 2026-08-28: Stage 6B added validated provider-usage runtime configuration,
+  environment-only OpenRouter credentials, and Redis reconciliation candidates.
+  Tests cover dependency validation, YAML credential rejection, stable
+  candidate identity, duplicate enqueue, random lease tokens, owner-only
+  acknowledgement/retry, sanitized error codes, and expired-lease recovery.
+  Focused `go test ./pkg/config ./pkg/controlplane` and the complete root
+  `go test ./...` suite passed.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 

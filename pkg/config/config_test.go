@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -78,6 +79,105 @@ auth:
 	}
 	if cfg.Redis.KeyPrefix != "onr" || cfg.Redis.OperationTimeoutMs != 500 || cfg.Redis.AccessKeyMode != "redis_preferred" || cfg.Redis.BillingMaxAttempts != 10 {
 		t.Fatalf("unexpected Redis defaults: %+v", cfg.Redis)
+	}
+	if cfg.ProviderUsage.Enabled || cfg.ProviderUsage.OpenRouter.Enabled {
+		t.Fatalf("provider usage must default disabled: %+v", cfg.ProviderUsage)
+	}
+	if cfg.ProviderUsage.PollIntervalMs != 60000 || cfg.ProviderUsage.CandidateLeaseMs != 30000 || cfg.ProviderUsage.OpenRouter.RequestTimeoutMs != 5000 {
+		t.Fatalf("unexpected provider usage defaults: %+v", cfg.ProviderUsage)
+	}
+}
+
+func TestLoad_ProviderUsageOpenRouterFromEnvironment(t *testing.T) {
+	path := writeConfigFile(t, `
+meterry:
+  enabled: true
+  base_url: "https://api.meterry.example"
+  project_id: "project"
+  api_key: "meterry-secret"
+  extractor_rule_set_id: "rules"
+redis:
+  enabled: true
+  access_key_hash_secret: "hash-secret"
+provider_usage:
+  enabled: true
+  poll_interval_ms: 1500
+  candidate_lease_ms: 2500
+  openrouter:
+    enabled: true
+    mode: authoritative
+    endpoint: "https://openrouter.example/api/v1/generation"
+    request_timeout_ms: 750
+    internal_key_ids: [" primary ", "primary", "backup"]
+`)
+	t.Setenv("ONR_OPENROUTER_USAGE_API_KEY", "server-owned-secret")
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ProviderUsage.OpenRouter.APIKey != "server-owned-secret" {
+		t.Fatal("OpenRouter usage API key was not loaded from the environment")
+	}
+	if !reflect.DeepEqual(cfg.ProviderUsage.OpenRouter.InternalKeyIDs, []string{"primary", "backup"}) {
+		t.Fatalf("internal key IDs=%v", cfg.ProviderUsage.OpenRouter.InternalKeyIDs)
+	}
+	if cfg.ProviderUsage.PollIntervalMs != 1500 || cfg.ProviderUsage.CandidateLeaseMs != 2500 {
+		t.Fatalf("provider usage intervals=%+v", cfg.ProviderUsage)
+	}
+}
+
+func TestLoad_ProviderUsageRejectsYAMLAPIKey(t *testing.T) {
+	path := writeConfigFile(t, `
+provider_usage:
+  openrouter:
+    api_key: "must-not-be-in-yaml"
+`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "ONR_OPENROUTER_USAGE_API_KEY") {
+		t.Fatalf("Load error=%v, want forbidden YAML API key", err)
+	}
+}
+
+func TestValidateProviderUsageDependencies(t *testing.T) {
+	valid := func() *Config {
+		cfg := &Config{}
+		applyDefaults(cfg)
+		cfg.Meterry.Enabled = true
+		cfg.Meterry.BaseURL = "https://meterry.example"
+		cfg.Meterry.ProjectID = "project"
+		cfg.Meterry.APIKey = "secret"
+		cfg.Meterry.ExtractorRuleSet = "rules"
+		cfg.Redis.Enabled = true
+		cfg.Redis.AccessKeyHashSecret = "hash-secret"
+		cfg.ProviderUsage.Enabled = true
+		cfg.ProviderUsage.OpenRouter.Enabled = true
+		cfg.ProviderUsage.OpenRouter.APIKey = "provider-secret"
+		cfg.ProviderUsage.OpenRouter.InternalKeyIDs = []string{"primary"}
+		return cfg
+	}
+	tests := []struct {
+		name string
+		edit func(*Config)
+		want string
+	}{
+		{"meterry required", func(c *Config) { c.Meterry.Enabled = false }, "meterry.enabled=true"},
+		{"redis required", func(c *Config) { c.Redis.Enabled = false }, "redis.enabled=true"},
+		{"root switch required", func(c *Config) { c.ProviderUsage.Enabled = false }, "provider_usage.enabled=true"},
+		{"adapter required", func(c *Config) { c.ProviderUsage.OpenRouter.Enabled = false }, "at least one enabled provider adapter"},
+		{"authoritative mode required", func(c *Config) { c.ProviderUsage.OpenRouter.Mode = "direct" }, "must be authoritative"},
+		{"environment key required", func(c *Config) { c.ProviderUsage.OpenRouter.APIKey = "" }, "ONR_OPENROUTER_USAGE_API_KEY"},
+		{"absolute endpoint required", func(c *Config) { c.ProviderUsage.OpenRouter.Endpoint = "/generation" }, "absolute HTTP(S) URL"},
+		{"internal key ID required", func(c *Config) { c.ProviderUsage.OpenRouter.InternalKeyIDs = nil }, "internal_key_ids"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := valid()
+			tt.edit(cfg)
+			err := validateProviderUsage(&cfg.ProviderUsage, cfg)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error=%v want substring %q", err, tt.want)
+			}
+		})
 	}
 }
 

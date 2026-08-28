@@ -96,6 +96,21 @@ redis:
   # Set through ONR_ACCESS_KEY_HASH_SECRET in production.
   access_key_hash_secret: ""
 
+provider_usage:
+  # Durable provider-side usage reconciliation. Requires Meterry and Redis.
+  enabled: false
+  poll_interval_ms: 60000
+  candidate_lease_ms: 30000
+  openrouter:
+    enabled: false
+    # The MVP supports authoritative provider usage only.
+    mode: "authoritative"
+    endpoint: "https://openrouter.ai/api/v1/generation"
+    request_timeout_ms: 5000
+    # Opaque names from keys.yaml covered by the server-side usage credential.
+    internal_key_ids: []
+    # Supply the credential only through ONR_OPENROUTER_USAGE_API_KEY.
+
 upstream_proxies:
   # Configure outbound HTTP proxy per provider (optional).
   # Example:
