@@ -32,6 +32,11 @@ The MVP is complete only when all of the following capabilities work together:
    balance, request history, and model usage for hourly, daily, and weekly
    periods.
 
+The word "credit" in this plan means the configured Meterry wallet allowance.
+Usage is still reported in both provider-native dimensions (for example input,
+output, cache, and reasoning tokens) and the configured charged currency. The
+MVP does not maintain a second token quota ledger inside ONR.
+
 ## 2. Fixed Product Decisions
 
 ### 2.1 Access Key Is the Account Credential
@@ -46,11 +51,16 @@ The MVP is complete only when all of the following capabilities work together:
   the same mapping.
 - A second active Access Key for the same account is rejected. Key rotation must
   preserve the account, wallet, usage history, and balance.
+- Administrative deletion is a soft-delete/revocation operation. It immediately
+  blocks gateway and portal authentication but retains the non-secret key ID,
+  account mapping, billing history, and audit trail. Physical ledger deletion is
+  outside the Access Key lifecycle.
 
 ### 2.2 Initial Credit and Balance Behavior
 
-- Every newly provisioned Access Key receives a configurable initial credit and
-  currency.
+- Every newly provisioned Access Key account receives a configurable initial
+  credit and currency exactly once. Rotating its credential does not grant a
+  second initial credit.
 - Meterry is authoritative for accounts, wallets, credits, debits, usage,
   limits, and bills.
 - Initial credit uses a deterministic idempotency key so retries cannot grant it
@@ -86,6 +96,31 @@ The MVP is complete only when all of the following capabilities work together:
 - Upstream errors must be normalized so credentials, private URLs, internal
   headers, and stack traces cannot leak.
 
+### 2.5 Provider Usage Source Modes
+
+Each provider integration must explicitly select one accounting source mode in
+server-side configuration. The proxy must not infer a mode from the provider
+name, request path, API operation, or model.
+
+- `direct`: usage returned by the proxied response is the billing source. No
+  provider usage poll may create a second charge for that request.
+- `authoritative`: ONR stores a reconciliation candidate and delays final
+  charging until the provider usage API returns the authoritative record.
+- `correction`: direct usage is charged first and a later provider record may
+  apply only an explicit idempotent delta. This mode is not required for the
+  MVP and must not be enabled until delta semantics are implemented and tested.
+
+Provider usage APIs may expose either of these explicit query shapes:
+
+1. Per-request detail, correlated by an upstream request/generation ID. The
+   OpenRouter generation-detail adapter is the first concrete implementation.
+2. Time-range listing, scoped by a server-owned internal upstream key identity,
+   with pagination/cursor support when the provider offers it.
+
+Credentials for both shapes remain server-side. Persisted candidates and user
+payloads contain only opaque internal key identifiers, never plaintext provider
+keys.
+
 ## 3. Target Request and Accounting Flow
 
 ```text
@@ -103,12 +138,13 @@ Authenticate Access Key
 For delayed provider usage:
 
 ```text
-Scheduled bounded provider query
-    -> identify the server-owned upstream key
+Persist reconciliation candidate with ONR and upstream request IDs
+    -> scheduled bounded provider query or per-request detail query
+    -> identify the opaque server-owned upstream key mapping
     -> normalize provider records to the common usage contract
-    -> correlate by provider + request_id
-    -> enqueue an idempotent reconciliation event
-    -> Meterry applies only the missing charge or correction
+    -> correlate by provider + upstream request ID + ONR request ID
+    -> enqueue with the original ONR billing idempotency identity
+    -> Meterry applies exactly one authoritative charge
 ```
 
 Required dimensions for an internal usage record:
@@ -146,6 +182,9 @@ The upstream key identity is internal-only and must not appear in user APIs.
 - The portal exposes an Access Key-scoped freshness timestamp and pending event
   count, never the global queue state.
 - At least one concrete provider usage API adapter is configured and verified.
+- Provider adapters support their declared query shape only; unsupported
+  pagination, streaming correlation, or time-list behavior fails validation or
+  remains visibly pending rather than silently falling back.
 - Direct response usage and delayed provider usage reconciliation cannot charge
   the same usage twice.
 
@@ -156,6 +195,8 @@ The upstream key identity is internal-only and must not appear in user APIs.
 - Retry partially completed provisioning without duplicating the account,
   wallet, or initial credit.
 - List, inspect, rotate, disable, and revoke an Access Key.
+- Soft-delete an Access Key through revocation while retaining its billing and
+  audit records.
 - Credit or debit its Meterry wallet with an administrator-supplied idempotency
   key.
 - View cross-account balance, requests, charges, model usage, provider usage,
@@ -241,20 +282,31 @@ Verification Pending
   selection shared by usage, bills, and request history.
 - [ ] Confirm all empty, loading, partial-failure, and narrow-screen states.
 
-### Stage 6: Provider Usage APIs and Reconciliation - Framework Complete,
-Concrete Integration Pending
+### Stage 6: Provider Usage APIs and Reconciliation - Adapter Complete,
+Automatic Reconciliation Pending
 
 - [x] Define a provider-neutral bounded usage adapter contract.
 - [x] Add a generic server-configured HTTP JSON adapter.
 - [x] Normalize provider records and enqueue provider-scoped idempotent Meterry
   reconciliation events.
-- [ ] Define secure configuration for provider usage endpoints, credentials,
-  internal key mapping, cursor/pagination, and polling windows.
 - [x] Implement and test the OpenRouter generation-detail adapter against a
   realistic response fixture, including its explicit no-pagination limitation.
+- [ ] Add an explicit DSL directive for extracting the provider request ID from
+  response JSON, including parsing, validation, documentation, semantic tests,
+  and provider-directory validation. Initial support is non-streaming only
+  unless SSE correlation is separately specified and tested.
+- [ ] Add secure runtime configuration for provider usage mode, endpoint,
+  internal key mapping, cursor/pagination behavior, polling/lease intervals,
+  and environment-sourced credentials.
+- [ ] Persist durable reconciliation candidates containing opaque upstream key
+  identity, provider request ID, ONR request ID, account scope, attempts, lease,
+  and retry state, but no provider secret.
 - [ ] Persist polling checkpoints and overlap windows so delayed records are
   recovered safely.
-- [ ] Prove direct usage and provider polling do not double charge.
+- [ ] Add automatic polling with bounded retries, leases, backoff, dead-letter
+  handling, and restart recovery.
+- [ ] Prove authoritative mode suppresses direct charging and reuses the
+  original ONR idempotency identity so provider polling cannot double charge.
 - [ ] Add reconciliation status, lag, failures, and retry visibility for
   administrators.
 
@@ -277,14 +329,41 @@ Concrete Integration Pending
 Work proceeds in small stages, and this file is updated after each completed
 stage. Each completed stage receives a dedicated Git commit.
 
-1. Add secure runtime configuration and candidate persistence for the concrete
-   OpenRouter usage adapter.
-2. Add polling, durable reconciliation checkpoints, lag visibility, and
-   no-double-charge tests.
-3. Execute the full real-service journey and close the production-readiness
-   acceptance criteria.
+1. **Stage 6A - Explicit correlation DSL.** Add response-JSON upstream request
+   ID extraction, configure it for OpenRouter, and complete the DSL checklist.
+2. **Stage 6B - Secure reconciliation state.** Add validated authoritative-mode
+   runtime configuration, environment-only provider credentials, and durable
+   Redis candidate/lease/retry storage.
+3. **Stage 6C - Automatic authoritative billing.** Suppress direct billing for
+   explicitly authoritative providers, poll OpenRouter, charge with the original
+   ONR idempotency identity, and prove retry/restart no-double-charge behavior.
+4. **Stage 6D - Operations.** Add checkpoint/overlap behavior where supported,
+   reconciliation lag/failure/dead-letter metrics, and administrator retry
+   controls. Document OpenRouter's per-request/no-pagination limitation.
+5. **Stage 7A - Real-service acceptance.** Run Redis + Meterry + ONR + provider
+   journeys for chat completions, responses, streaming/non-streaming behavior,
+   two-key isolation, initial credit, rotation, revocation, and reconciliation.
+6. **Stage 7B - Production readiness.** Complete leakage audit, browser state
+   verification, deployment/migration/backup/recovery/rollback documentation,
+   and operational runbooks.
 
-## 7. Verification Record
+## 7. Requirement Traceability
+
+| Product requirement | Implemented foundation | Remaining completion gate |
+| --- | --- | --- |
+| Relay multiple API providers behind one Access Key and ONR URL | Explicit provider DSL, model routes, Access Key policies, server-owned credentials, OpenAI-style and Gemini handlers | Real provider chat completions/responses and streaming/non-streaming acceptance; leakage audit |
+| Meter every request to the Access Key | Authenticated billing principal, Meterry outbox, idempotent events, best-effort balance check | Automatic authoritative provider reconciliation and no-double-charge proof |
+| Query provider usage by request or internal key/time range | Provider-neutral contract, generic HTTP adapter, OpenRouter per-generation adapter | Secure runtime wiring; durable polling; first time-range adapter when a selected provider exposes that API |
+| Grant initial credit and allow small overspend | Idempotent Meterry account/wallet provisioning, configurable initial credit, no reservation | Production-compatible Meterry verification and concurrency journey |
+| Administer Access Keys and balances | Create/list/inspect/rotate/disable/revoke, soft-delete semantics, credit/debit, meter summaries | Real-service lifecycle verification and reconciliation operations view |
+| Access Key portal login and self-service usage views | Server-side sessions, balance/limits, sanitized requests, model usage, bills, freshness, hour/day/week/custom ranges and timezone | Real-service isolation test and empty/loading/error/mobile browser verification |
+
+The first time-range provider adapter is required when the deployment selects a
+provider that exposes such an API. OpenRouter's current generation-detail API
+does not provide time-range listing, so it satisfies only the per-request query
+shape and must not be documented as broader coverage.
+
+## 8. Verification Record
 
 - 2026-08-27: the root module and independent `onr-core` module passed complete
   `go test ./...` suites with Go 1.26.6 and `/tmp` Go caches. Coverage included
@@ -306,7 +385,18 @@ stage. Each completed stage receives a dedicated Git commit.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 
-## 8. Explicitly Out of Scope for the MVP
+## 9. Plan Maintenance Rules
+
+- Update checkboxes and the stage heading in this file in the same commit as
+  each completed implementation stage.
+- Add the verification command and outcome to the verification record.
+- Use one dedicated Git commit per completed stage; do not include unrelated
+  worktree files.
+- A stage is complete only when implementation, tests, required DSL/docs, and
+  failure behavior are all present. Local test doubles must be labeled as such
+  and do not close real-service acceptance items.
+
+## 10. Explicitly Out of Scope for the MVP
 
 - A separate local user identity, email, password, organization, or membership
   system.
