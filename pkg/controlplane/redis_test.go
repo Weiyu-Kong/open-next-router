@@ -203,6 +203,63 @@ func TestBillingStreamRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBillingPendingForAccessKeyTracksAck(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureBillingGroup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id, err := c.EnqueueBillingEventForAccessKey(ctx, []byte(`{"idempotency_key":"onr:req-2"}`), "key-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := c.BillingPendingForAccessKey(ctx, "key-a"); err != nil || pending != 1 {
+		t.Fatalf("pending after enqueue=(%d,%v)", pending, err)
+	}
+	if _, err := c.EnqueueBillingEventForAccessKey(ctx, []byte(`{"idempotency_key":"onr:req-3"}`), "key-b"); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := c.ReadBilling(ctx, 1, time.Second)
+	if err != nil || len(messages) != 1 || messages[0].ID != id {
+		t.Fatalf("messages=(%+v,%v)", messages, err)
+	}
+	if err := c.AckBilling(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := c.BillingPendingForAccessKey(ctx, "key-a"); err != nil || pending != 0 {
+		t.Fatalf("pending after ack=(%d,%v)", pending, err)
+	}
+	if pending, err := c.BillingPendingForAccessKey(ctx, "key-b"); err != nil || pending != 1 {
+		t.Fatalf("key-b pending after key-a ack=(%d,%v)", pending, err)
+	}
+}
+
+func TestBillingPendingForAccessKeyTracksDeadLetter(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureBillingGroup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"idempotency_key":"onr:req-dead"}`)
+	id, err := c.EnqueueBillingEventForAccessKey(ctx, payload, "key-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ReadBilling(ctx, 1, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.DeadLetterBilling(ctx, id, payload); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := c.BillingPendingForAccessKey(ctx, "key-a"); err != nil || pending != 0 {
+		t.Fatalf("pending after dead letter=(%d,%v)", pending, err)
+	}
+	_, deadLetter, err := c.BillingStats(ctx)
+	if err != nil || deadLetter != 1 {
+		t.Fatalf("dead-letter stats=(%d,%v)", deadLetter, err)
+	}
+}
+
 func TestBalanceRefreshLockIsOwned(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()

@@ -228,8 +228,10 @@ Verification Pending
 - [x] Show balance, model usage, bills, and sanitized request history.
 - [x] Add shared 24-hour, 7-day, and 30-day selectors.
 - [x] Add administrator cross-account meter summaries and Billing-page views.
-- [ ] Expose per-key ingestion freshness and pending billing events in the user
-  portal.
+- [x] Expose per-key ingestion freshness and pending billing events in the user
+  portal through session-scoped `/api/user/freshness`.
+- [x] Increment pending state when a keyed billing event is enqueued and clear it
+  atomically when the event is acknowledged or moved to dead letter.
 - [ ] Add bounded custom start/end timestamps and explicit timezone selection.
 - [ ] Confirm all empty, loading, partial-failure, and narrow-screen states.
 
@@ -269,14 +271,12 @@ Concrete Integration Pending
 Work proceeds in small stages, and this file is updated after each completed
 stage. Each completed stage receives a dedicated Git commit.
 
-1. Finish per-Access-Key billing freshness tracking and expose it through a
-   session-scoped user API and the `/user` portal.
-2. Add consistent currency metadata and finish custom range/timezone behavior.
-3. Add provisioning failure-injection tests.
-4. Configure and verify the first concrete provider usage API integration.
-5. Add durable reconciliation checkpoints, lag visibility, and no-double-charge
+1. Add consistent currency metadata and finish custom range/timezone behavior.
+2. Add provisioning failure-injection tests.
+3. Configure and verify the first concrete provider usage API integration.
+4. Add durable reconciliation checkpoints, lag visibility, and no-double-charge
    tests.
-6. Execute the full real-service journey and close the production-readiness
+5. Execute the full real-service journey and close the production-readiness
    acceptance criteria.
 
 ## 7. Verification Record
@@ -285,6 +285,9 @@ stage. Each completed stage receives a dedicated Git commit.
   `go test ./...` suites with Go 1.26.6 and `/tmp` Go caches. Coverage included
   Redis/miniredis, Meterry/httptest, provider DSL validation, proxy behavior,
   admin Web APIs, usage extraction, and usage adapters.
+- 2026-08-28: the root module passed `go test ./...` after per-Access-Key
+  freshness tracking was added. Focused tests also verified Access Key isolation,
+  successful acknowledgement, dead-letter cleanup, and the user endpoint.
 - A live Meterry/Redis/provider deployment has not yet been verified. Local test
   doubles do not establish external service compatibility or complete Stage 7.
 

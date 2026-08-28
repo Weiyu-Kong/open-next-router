@@ -287,6 +287,7 @@ func (s *Server) Handler() http.Handler {
 	userAPI.HandleFunc("/api/user/usage", s.handleUserUsage)
 	userAPI.HandleFunc("/api/user/requests", s.handleUserRequests)
 	userAPI.HandleFunc("/api/user/bills", s.handleUserBills)
+	userAPI.HandleFunc("/api/user/freshness", s.handleUserFreshness)
 	mux.Handle("/api/user/", userAPI)
 	mux.Handle("/api/", s.authMiddleware(api))
 	return mux
@@ -529,6 +530,29 @@ func (s *Server) handleUserBills(w http.ResponseWriter, r *http.Request) {
 		currency = strings.TrimSpace(cfg.Meterry.BalanceEnforcement.Currency)
 	}
 	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "start": start, "end": end, "currency": currency, "bills": rows, "has_more": bills.HasMore})
+}
+
+func (s *Server) handleUserFreshness(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	record, ok := s.userSession(r)
+	if !ok {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
+		return
+	}
+	pending, err := s.service.BillingPendingForAccessKey(r.Context(), record.Name)
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "billing freshness unavailable"})
+		return
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{
+		"ok":                     true,
+		"as_of":                  time.Now().UTC(),
+		"pending_billing_events": pending,
+		"eventual_consistency":   true,
+	})
 }
 
 func parseUnixQuery(value string, fallback int64) int64 {

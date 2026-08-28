@@ -395,6 +395,17 @@ func (s *Service) QueryAccessKeyBills(ctx context.Context, rec controlplane.Acce
 	})
 }
 
+func (s *Service) BillingPendingForAccessKey(ctx context.Context, accessKeyID string) (int64, error) {
+	if s.cp == nil {
+		return 0, fmt.Errorf("redis billing state is disabled")
+	}
+	accessKeyID = strings.TrimSpace(accessKeyID)
+	if accessKeyID == "" {
+		return 0, fmt.Errorf("access key ID is required")
+	}
+	return s.cp.BillingPendingForAccessKey(ctx, accessKeyID)
+}
+
 // ListAccessKeyMeterSummaries provides an administrator-only cross-account
 // view. A failure for one account is returned on that row so the remaining
 // accounts stay visible.

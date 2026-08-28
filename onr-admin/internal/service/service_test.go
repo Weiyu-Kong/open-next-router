@@ -50,6 +50,12 @@ func TestListAccessKeyMeterSummaries(t *testing.T) {
 	cfg.Meterry.ProjectID = "project-a"
 	cfg.Meterry.BalanceEnforcement.Currency = "USD"
 	service := &Service{cfg: cfg, cp: cp, meterry: meterryClient}
+	if _, err := cp.EnqueueBillingEventForAccessKey(t.Context(), []byte(`{"idempotency_key":"onr:req-a"}`), "key-a"); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := service.BillingPendingForAccessKey(t.Context(), "key-a"); err != nil || pending != 1 {
+		t.Fatalf("billing pending=(%d,%v)", pending, err)
+	}
 
 	rows, err := service.ListAccessKeyMeterSummaries(context.Background(), time.Now().Add(-24*time.Hour).Unix(), time.Now().Unix())
 	if err != nil || len(rows) != 1 {

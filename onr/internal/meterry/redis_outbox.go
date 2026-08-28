@@ -18,8 +18,17 @@ func (o *redisOutbox) append(event Event) error {
 	if err != nil {
 		return err
 	}
-	_, err = o.controlPlane.EnqueueBillingEvent(context.Background(), raw)
+	_, err = o.controlPlane.EnqueueBillingEventForAccessKey(context.Background(), raw, eventAccessKeyID(event))
 	return err
+}
+
+func eventAccessKeyID(event Event) string {
+	meta, ok := event.RawJSON["meta"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	value, _ := meta["access_key_id"].(string)
+	return value
 }
 
 func (o *redisOutbox) first() (Event, string, error) {

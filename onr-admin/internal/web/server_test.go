@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/dsllang"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
 )
@@ -114,6 +116,72 @@ func TestUserMeRequiresSession(t *testing.T) {
 	srv.Handler().ServeHTTP(res, req)
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestUserFreshnessRequiresSession(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.conf"), []byte(validOpenAIConf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := newServerWithOptions(dir, t.TempDir(), defaultAPIBaseURL, "", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+	req := httptest.NewRequest(http.MethodGet, "/api/user/freshness?access_key_id=another-key", nil)
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func TestUserFreshnessUsesSessionAccessKey(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.conf"), []byte(validOpenAIConf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	redisServer := miniredis.RunT(t)
+	cfgPath := filepath.Join(t.TempDir(), "onr.yaml")
+	cfg := "redis:\n  enabled: true\n  addr: redis://" + redisServer.Addr() + "\n  access_key_hash_secret: test-secret\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := newServerWithOptions(dir, t.TempDir(), defaultAPIBaseURL, cfgPath, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+	cp := srv.service.Client()
+	record := controlplane.AccessKeyRecord{Name: "key-a", SecretHash: cp.HashAccessKey("secret-a"), Status: "active", SubjectType: "api_key", SubjectID: "subject-a", AccountID: "account-a"}
+	if err := cp.CreateAccessKey(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cp.EnqueueBillingEventForAccessKey(t.Context(), []byte(`{"id":"a"}`), "key-a"); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := cp.EnqueueBillingEventForAccessKey(t.Context(), []byte(`{"id":"b"}`), "key-b"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv.userSessions["session-a"] = userSession{Record: record, ExpiresAt: time.Now().Add(time.Hour)}
+	req := httptest.NewRequest(http.MethodGet, "/api/user/freshness?access_key_id=key-b", nil)
+	req.AddCookie(&http.Cookie{Name: userSessionCookie, Value: "session-a"})
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+	}
+	var body struct {
+		Pending int64 `json:"pending_billing_events"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Pending != 1 {
+		t.Fatalf("pending=%d, want session key count 1", body.Pending)
 	}
 }
 

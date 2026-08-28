@@ -159,6 +159,8 @@ func (c *Client) subjectKey(subjectType, subjectID string) string {
 func (c *Client) balanceKey(subjectType, subjectID, currency string) string {
 	return c.key("balance", subjectType, subjectID, currency)
 }
+func (c *Client) billingAccessKeyMapKey() string { return c.key(c.billingStream, "access-keys") }
+func (c *Client) billingPendingKey() string      { return c.key(c.billingStream, "pending-by-access-key") }
 
 func (c *Client) HashAccessKey(secret string) string {
 	mac := hmac.New(sha256.New, c.hashSecret)
@@ -505,10 +507,23 @@ func (c *Client) InvalidateBalanceCache(ctx context.Context, subjectType, subjec
 }
 
 func (c *Client) EnqueueBillingEvent(ctx context.Context, payload []byte) (string, error) {
+	return c.EnqueueBillingEventForAccessKey(ctx, payload, "")
+}
+
+func (c *Client) EnqueueBillingEventForAccessKey(ctx context.Context, payload []byte, accessKeyID string) (string, error) {
 	var id string
+	const enqueueScript = `
+local id = redis.call('xadd', KEYS[1], '*', 'payload', ARGV[1])
+if ARGV[2] ~= '' then
+  redis.call('hset', KEYS[2], id, ARGV[2])
+  redis.call('hincrby', KEYS[3], ARGV[2], 1)
+end
+return id`
 	err := c.withTimeout(ctx, func(ctx context.Context) error {
-		var err error
-		id, err = c.rdb.XAdd(ctx, &redis.XAddArgs{Stream: c.key(c.billingStream), Values: map[string]any{"payload": string(payload)}}).Result()
+		result, err := c.rdb.Eval(ctx, enqueueScript, []string{c.key(c.billingStream), c.billingAccessKeyMapKey(), c.billingPendingKey()}, string(payload), strings.TrimSpace(accessKeyID)).Result()
+		if err == nil {
+			id = fmt.Sprint(result)
+		}
 		return err
 	})
 	return id, err
@@ -559,9 +574,40 @@ func (c *Client) readBilling(ctx context.Context, count int, block time.Duration
 }
 
 func (c *Client) AckBilling(ctx context.Context, ids ...string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	const ackScript = `
+local total = 0
+for i, id in ipairs(ARGV) do
+  local acknowledged = redis.call('xack', KEYS[1], KEYS[2], id)
+  total = total + acknowledged
+  if acknowledged > 0 then
+    local access_key = redis.call('hget', KEYS[3], id)
+    if access_key then
+      local pending = redis.call('hincrby', KEYS[4], access_key, -1)
+      if pending <= 0 then redis.call('hdel', KEYS[4], access_key) end
+      redis.call('hdel', KEYS[3], id)
+    end
+  end
+end
+return total`
 	return c.withTimeout(ctx, func(ctx context.Context) error {
-		return c.rdb.XAck(ctx, c.key(c.billingStream), c.billingGroup, ids...).Err()
+		return c.rdb.Eval(ctx, ackScript, []string{c.key(c.billingStream), c.billingGroup, c.billingAccessKeyMapKey(), c.billingPendingKey()}, ids).Err()
 	})
+}
+
+func (c *Client) BillingPendingForAccessKey(ctx context.Context, accessKeyID string) (int64, error) {
+	var pending int64
+	err := c.withTimeout(ctx, func(ctx context.Context) error {
+		var err error
+		pending, err = c.rdb.HGet(ctx, c.billingPendingKey(), strings.TrimSpace(accessKeyID)).Int64()
+		if errors.Is(err, redis.Nil) {
+			pending, err = 0, nil
+		}
+		return err
+	})
+	return pending, err
 }
 
 func (c *Client) BillingMaxAttempts() int {
@@ -626,14 +672,27 @@ func (c *Client) IncrementBillingAttempt(ctx context.Context, streamID string) (
 }
 
 func (c *Client) DeadLetterBilling(ctx context.Context, streamID string, payload []byte) error {
+	const deadLetterScript = `
+redis.call('xadd', KEYS[1], '*', 'source_id', ARGV[1], 'payload', ARGV[2])
+redis.call('xack', KEYS[2], KEYS[3], ARGV[1])
+redis.call('xdel', KEYS[2], ARGV[1])
+redis.call('hdel', KEYS[4], ARGV[1])
+local access_key = redis.call('hget', KEYS[5], ARGV[1])
+if access_key then
+  local pending = redis.call('hincrby', KEYS[6], access_key, -1)
+  if pending <= 0 then redis.call('hdel', KEYS[6], access_key) end
+  redis.call('hdel', KEYS[5], ARGV[1])
+end
+return 1`
 	return c.withTimeout(ctx, func(ctx context.Context) error {
-		pipe := c.rdb.TxPipeline()
-		pipe.XAdd(ctx, &redis.XAddArgs{Stream: c.key(c.billingStream, "dead-letter"), Values: map[string]any{"source_id": streamID, "payload": string(payload)}})
-		pipe.XAck(ctx, c.key(c.billingStream), c.billingGroup, streamID)
-		pipe.XDel(ctx, c.key(c.billingStream), streamID)
-		pipe.HDel(ctx, c.key(c.billingStream, "attempts"), streamID)
-		_, err := pipe.Exec(ctx)
-		return err
+		return c.rdb.Eval(ctx, deadLetterScript, []string{
+			c.key(c.billingStream, "dead-letter"),
+			c.key(c.billingStream),
+			c.billingGroup,
+			c.key(c.billingStream, "attempts"),
+			c.billingAccessKeyMapKey(),
+			c.billingPendingKey(),
+		}, streamID, string(payload)).Err()
 	})
 }
 
