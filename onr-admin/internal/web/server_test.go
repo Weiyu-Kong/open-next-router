@@ -189,7 +189,7 @@ func TestUserUsageBucket(t *testing.T) {
 	for _, tc := range []struct {
 		input, want string
 	}{
-		{"hour", "1h"}, {"day", "1d"}, {"week", "1w"}, {"", "1h"},
+		{"hour", "1h"}, {"day", "1d"}, {"week", "7d"}, {"", "1h"},
 	} {
 		got, ok := userUsageBucket(tc.input)
 		if !ok || got != tc.want {
@@ -234,12 +234,44 @@ func TestUserPortalAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = srv.Close() }()
+	assets := make(map[string]string)
 	for _, path := range []string{"/user", "/user.css", "/user.js"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		res := httptest.NewRecorder()
 		srv.Handler().ServeHTTP(res, req)
 		if res.Code != http.StatusOK || res.Body.Len() == 0 {
 			t.Fatalf("%s status=%d body length=%d", path, res.Code, res.Body.Len())
+		}
+		assets[path] = res.Body.String()
+	}
+	if !strings.Contains(assets["/user"], `data-dimension="tokens"`) || !strings.Contains(assets["/user"], `data-dimension="cost"`) {
+		t.Fatal("user portal is missing the token/cost dimension control")
+	}
+	for _, expected := range []string{"measures.amount", "measures.quantity", "metric?.amount", "metric?.value"} {
+		if !strings.Contains(assets["/user.js"], expected) {
+			t.Fatalf("user script is missing %q", expected)
+		}
+	}
+	if strings.Contains(assets["/user.js"], `getElementById("bills")`) {
+		t.Fatal("user script references the removed bills element")
+	}
+}
+
+func TestAdminPortalIncludesAccessKeyRoutingEditor(t *testing.T) {
+	srv, err := NewServer(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+	req := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	res := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status=%d", res.Code)
+	}
+	for _, expected := range []string{"editProviders", "editModels", "editBindings", "/routing", `method:"PUT"`} {
+		if !strings.Contains(res.Body.String(), expected) {
+			t.Fatalf("admin script is missing %q", expected)
 		}
 	}
 }
@@ -254,52 +286,6 @@ func TestUserLoginRateLimit(t *testing.T) {
 	}
 	if !srv.loginRateLimited("client") {
 		t.Fatal("expected client to be rate limited")
-	}
-}
-
-func TestAdminCreateAccessKeyReturnsSecretWhenProvisioningIsPending(t *testing.T) {
-	providersDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(providersDir, "openai.conf"), []byte(validOpenAIConf), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	meterryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "injected provisioning failure", http.StatusServiceUnavailable)
-	}))
-	defer meterryServer.Close()
-	redisServer := miniredis.RunT(t)
-	cfgPath := filepath.Join(t.TempDir(), "onr.yaml")
-	cfg := "meterry:\n  enabled: true\n  base_url: " + meterryServer.URL + "\n  project_id: project-a\n  api_key: test-key\n  extractor_rule_set_id: test-rules\n  initial_credit: '100'\nredis:\n  enabled: true\n  addr: redis://" + redisServer.Addr() + "\n  access_key_hash_secret: test-secret\n"
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	srv, err := newServerWithOptions(providersDir, t.TempDir(), defaultAPIBaseURL, cfgPath, "", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = srv.Close() }()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/access-keys", strings.NewReader(`{"name":"key-a","subject_type":"api_key","subject_id":"subject-a"}`))
-	req.Header.Set("Content-Type", "application/json")
-	res := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(res, req)
-	if res.Code != http.StatusAccepted {
-		t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
-	}
-	var body struct {
-		OK      bool   `json:"ok"`
-		Pending bool   `json:"pending"`
-		Secret  string `json:"secret"`
-		Error   string `json:"error"`
-	}
-	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if !body.OK || !body.Pending || body.Secret == "" || body.Error == "" {
-		t.Fatalf("response=%+v", body)
-	}
-	record, err := srv.service.GetAccessKey(t.Context(), "key-a")
-	if err != nil || record == nil || record.Status != "pending" || record.Provisioning != "failed" {
-		t.Fatalf("pending record=(%+v,%v)", record, err)
 	}
 }
 

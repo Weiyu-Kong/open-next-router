@@ -3,43 +3,37 @@ package tui
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/keystore"
+	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
 )
 
 type adminService struct {
-	cfg *config.Config
-	cp  *controlplane.Client
+	cfg    *config.Config
+	cp     *controlplane.Client
+	ledger *billing.Ledger
 }
 
 type overviewSnapshot struct {
-	RedisEnabled      bool
-	RedisReachable    bool
-	RedisError        string
-	KeyPrefix         string
-	AccessKeyMode     string
-	MeterryEnabled    bool
-	MeterryReachable  bool
-	MeterryConfigured bool
-	MeterryError      string
-	ProjectID         string
-	ExtractorRuleSet  string
-	Pending           int64
-	DeadLetter        int64
-	BillingError      string
-	ConsumerGroup     string
-	ConsumerName      string
-	MaxAttempts       int
-	FailureMode       string
-	BalanceCacheTTL   time.Duration
-	NegativeCacheTTL  time.Duration
-	RefreshedAt       time.Time
+	RedisEnabled   bool
+	RedisReachable bool
+	RedisError     string
+	KeyPrefix      string
+	AccessKeyMode  string
+	BillingEnabled bool
+	Currency       string
+	Pending        int64
+	DeadLetter     int64
+	BillingError   string
+	ConsumerGroup  string
+	ConsumerName   string
+	MaxAttempts    int
+	RefreshedAt    time.Time
 }
 
 type migrationReport struct {
@@ -74,6 +68,11 @@ func newAdminService(cfgPath string) (*adminService, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("init Redis control plane: %w", err)
+	}
+	s.ledger, err = billing.New(s.cp, billing.Config{Enabled: cfg.Billing.Enabled, Currency: cfg.Billing.Currency, InitialCredit: cfg.Billing.InitialCredit})
+	if err != nil {
+		_ = s.cp.Close()
+		return nil, fmt.Errorf("init local billing: %w", err)
 	}
 	return s, nil
 }
@@ -132,6 +131,11 @@ func (s *adminService) CreateAccessKey(ctx context.Context, name, subjectType, s
 	if err := s.cp.CreateAccessKey(ctx, record); err != nil {
 		return "", err
 	}
+	if s.ledger != nil && s.ledger.Enabled() {
+		if err := s.ledger.ProvisionAccount(ctx, accountID); err != nil {
+			return "", err
+		}
+	}
 	return secret, nil
 }
 
@@ -161,20 +165,15 @@ func (s *adminService) Snapshot(ctx context.Context) overviewSnapshot {
 		return overviewSnapshot{RefreshedAt: time.Now()}
 	}
 	result := overviewSnapshot{
-		RedisEnabled:      s.cfg.Redis.Enabled,
-		KeyPrefix:         s.cfg.Redis.KeyPrefix,
-		AccessKeyMode:     s.cfg.Redis.AccessKeyMode,
-		MeterryEnabled:    s.cfg.Meterry.Enabled,
-		MeterryConfigured: strings.TrimSpace(s.cfg.Meterry.BaseURL) != "" && strings.TrimSpace(s.cfg.Meterry.ProjectID) != "" && strings.TrimSpace(s.cfg.Meterry.APIKey) != "",
-		ProjectID:         redactIdentifier(s.cfg.Meterry.ProjectID),
-		ExtractorRuleSet:  redactIdentifier(s.cfg.Meterry.ExtractorRuleSet),
-		ConsumerGroup:     s.cfg.Redis.BillingConsumerGroup,
-		ConsumerName:      s.cfg.Redis.BillingConsumerName,
-		MaxAttempts:       s.cfg.Redis.BillingMaxAttempts,
-		FailureMode:       s.cfg.Meterry.BalanceEnforcement.FailureMode,
-		BalanceCacheTTL:   s.cfg.Meterry.BalanceCacheTTL(),
-		NegativeCacheTTL:  s.cfg.Meterry.BalanceNegativeCacheTTL(),
-		RefreshedAt:       time.Now(),
+		RedisEnabled:   s.cfg.Redis.Enabled,
+		KeyPrefix:      s.cfg.Redis.KeyPrefix,
+		AccessKeyMode:  s.cfg.Redis.AccessKeyMode,
+		BillingEnabled: s.cfg.Billing.Enabled,
+		Currency:       s.cfg.Billing.Currency,
+		ConsumerGroup:  s.cfg.Redis.BillingConsumerGroup,
+		ConsumerName:   s.cfg.Redis.BillingConsumerName,
+		MaxAttempts:    s.cfg.Redis.BillingMaxAttempts,
+		RefreshedAt:    time.Now(),
 	}
 	if s.cp != nil {
 		result.ConsumerName = s.cp.BillingConsumerName()
@@ -183,40 +182,13 @@ func (s *adminService) Snapshot(ctx context.Context) overviewSnapshot {
 		} else {
 			result.RedisReachable = true
 		}
-		if s.cfg.Meterry.Enabled {
-			var err error
-			result.Pending, result.DeadLetter, err = s.cp.BillingStats(ctx)
-			if err != nil {
-				result.BillingError = err.Error()
-			}
+		var err error
+		result.Pending, result.DeadLetter, err = s.cp.BillingStats(ctx)
+		if err != nil {
+			result.BillingError = err.Error()
 		}
 	}
-	if s.cfg.Meterry.Enabled && result.MeterryConfigured {
-		result.MeterryReachable, result.MeterryError = meterryReachable(ctx, s.cfg.Meterry.BaseURL)
-	}
 	return result
-}
-
-func meterryReachable(ctx context.Context, baseURL string) (bool, string) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodHead, strings.TrimRight(baseURL, "/"), nil)
-	if err != nil {
-		return false, err.Error()
-	}
-	client := &http.Client{Timeout: 2 * time.Second}
-	response, err := client.Do(request)
-	if err != nil {
-		return false, err.Error()
-	}
-	_ = response.Body.Close()
-	return true, ""
-}
-
-func redactIdentifier(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) <= 10 {
-		return value
-	}
-	return value[:6] + "..." + value[len(value)-4:]
 }
 
 func parseCommaList(raw string, lower bool) []string {
@@ -277,6 +249,11 @@ func (s *adminService) Migrate(ctx context.Context, keysPath string, dryRun bool
 		}
 		if err := s.cp.CreateAccessKey(ctx, record); err != nil {
 			return report, err
+		}
+		if s.ledger != nil && s.ledger.Enabled() {
+			if err := s.ledger.ProvisionAccount(ctx, record.AccountID); err != nil {
+				return report, err
+			}
 		}
 		report.Migrated++
 	}

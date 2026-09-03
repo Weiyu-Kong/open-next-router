@@ -1,9 +1,13 @@
 package web
 
 import (
+	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,6 +71,19 @@ type Server struct {
 type userSession struct {
 	Record    controlplane.AccessKeyRecord
 	ExpiresAt time.Time
+}
+
+type meterBridgeClaims struct {
+	Purpose     string `json:"purpose"`
+	SubjectType string `json:"subject_type"`
+	SubjectID   string `json:"subject_id"`
+	UserID      string `json:"user_id"`
+	Username    string `json:"username"`
+	TeamID      string `json:"team_id"`
+	TeamName    string `json:"team_name"`
+	DisplayName string `json:"display_name"`
+	IssuedAt    int64  `json:"issued_at"`
+	ExpiresAt   int64  `json:"expires_at"`
 }
 
 type loginAttempt struct {
@@ -178,6 +195,13 @@ type adminAccessKeyInput struct {
 	ExpiresAt           string            `json:"expires_at"`
 	Metadata            map[string]string `json:"metadata"`
 }
+
+type adminAccessKeyRoutingInput struct {
+	AllowedProviders    string            `json:"allowed_providers"`
+	AllowedModels       string            `json:"allowed_models"`
+	ProviderKeyBindings map[string]string `json:"provider_key_bindings"`
+	Version             int64             `json:"version"`
+}
 type adminAccessKeyResponse struct {
 	OK      bool   `json:"ok"`
 	Pending bool   `json:"pending,omitempty"`
@@ -282,6 +306,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/admin/access-keys/", s.handleAdminAccessKey)
 	api.HandleFunc("/api/admin/meter/access-keys", s.handleAdminMeterAccessKeys)
 	userAPI := http.NewServeMux()
+	userAPI.HandleFunc("/api/user/bridge", s.handleUserBridge)
 	userAPI.HandleFunc("/api/user/login", s.handleUserLogin)
 	userAPI.HandleFunc("/api/user/logout", s.handleUserLogout)
 	userAPI.HandleFunc("/api/user/me", s.handleUserMe)
@@ -339,6 +364,98 @@ func (s *Server) handleUserLogin(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: userSessionCookie, Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(userSessionTTL.Seconds())})
 	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "account": safeUserAccount(*record), "expires_at": time.Now().Add(userSessionTTL)})
+}
+
+func (s *Server) handleUserBridge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if s.service == nil || s.service.Config() == nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "meter bridge is not configured"})
+		return
+	}
+	bridgeSecret := strings.TrimSpace(s.service.Config().UserMeter.BridgeSecret)
+	if bridgeSecret == "" {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "meter bridge secret is not configured"})
+		return
+	}
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if token == "" {
+		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "token is required"})
+		return
+	}
+	claims, err := parseMeterBridgeToken(token, bridgeSecret)
+	if err != nil {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	record, created, err := s.ensureMeterBridgeSession(r.Context(), claims)
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	sessionToken, err := newUserSessionToken()
+	if err != nil {
+		writeJSONAny(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": "could not create session"})
+		return
+	}
+	s.mu.Lock()
+	s.userSessions[sessionToken] = userSession{Record: *record, ExpiresAt: time.Now().Add(userSessionTTL)}
+	s.mu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: userSessionCookie, Value: sessionToken, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(userSessionTTL.Seconds())})
+	redirectTo := "/user"
+	if created {
+		redirectTo += "?bridge=created"
+	} else {
+		redirectTo += "?bridge=existing"
+	}
+	http.Redirect(w, r, redirectTo, http.StatusSeeOther)
+}
+
+func (s *Server) ensureMeterBridgeSession(ctx context.Context, claims meterBridgeClaims) (*controlplane.AccessKeyRecord, bool, error) {
+	if strings.TrimSpace(claims.Purpose) != "meter-bridge" {
+		return nil, false, errors.New("invalid meter bridge token")
+	}
+	if time.Now().Unix() > claims.ExpiresAt {
+		return nil, false, errors.New("meter bridge token expired")
+	}
+	subjectType := strings.ToLower(strings.TrimSpace(claims.SubjectType))
+	switch subjectType {
+	case "team", "user":
+	default:
+		return nil, false, errors.New("invalid meter bridge subject type")
+	}
+	subjectID := strings.TrimSpace(claims.SubjectID)
+	if subjectID == "" {
+		return nil, false, errors.New("meter bridge subject is empty")
+	}
+	name := meterBridgeAccessKeyName(subjectType, subjectID)
+	metadata := map[string]string{
+		"bridge_source":   "arc-bench",
+		"bridge_user_id":  strings.TrimSpace(claims.UserID),
+		"bridge_username": strings.TrimSpace(claims.Username),
+	}
+	if teamID := strings.TrimSpace(claims.TeamID); teamID != "" {
+		metadata["bridge_team_id"] = teamID
+	}
+	if teamName := strings.TrimSpace(claims.TeamName); teamName != "" {
+		metadata["bridge_team_name"] = teamName
+	}
+	if displayName := strings.TrimSpace(claims.DisplayName); displayName != "" {
+		metadata["bridge_display_name"] = displayName
+	}
+	record, created, err := s.service.EnsureAccessKey(ctx, adminservice.CreateAccessKeyInput{
+		Name:        name,
+		SubjectType: subjectType,
+		SubjectID:   subjectID,
+		AccountID:   subjectID,
+		Metadata:    metadata,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return record, created, nil
 }
 
 func loginClientID(r *http.Request) string {
@@ -458,7 +575,7 @@ func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groupBy := []string{"bucket", "model"}
-	response, err := s.service.QueryAccessKeyUsage(r.Context(), record, adminservice.UserUsageQuery{BucketSize: bucket, StartTime: window.Start, EndTime: window.End, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: groupBy, Measures: []string{"quantity"}, Limit: 1000})
+	response, err := s.service.QueryAccessKeyUsage(r.Context(), record, adminservice.UserUsageQuery{BucketSize: bucket, Timezone: window.Timezone, StartTime: window.Start, EndTime: window.End, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: groupBy, Measures: []string{"quantity", "amount"}, Limit: 1000})
 	if err != nil {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "usage service unavailable"})
 		return
@@ -596,7 +713,8 @@ func userUsageBucket(value string) (string, bool) {
 	case "day", "days":
 		return "1d", true
 	case "week", "weeks":
-		return "1w", true
+		// The local ledger uses a seven-day window for weekly reports.
+		return "7d", true
 	default:
 		return "", false
 	}
@@ -636,6 +754,40 @@ func newUserSessionToken() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func parseMeterBridgeToken(token string, secret string) (meterBridgeClaims, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return meterBridgeClaims{}, errors.New("invalid meter bridge token")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return meterBridgeClaims{}, errors.New("invalid meter bridge token")
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return meterBridgeClaims{}, errors.New("invalid meter bridge token")
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(raw)
+	if !hmac.Equal(sig, mac.Sum(nil)) {
+		return meterBridgeClaims{}, errors.New("invalid meter bridge token")
+	}
+	var claims meterBridgeClaims
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return meterBridgeClaims{}, errors.New("invalid meter bridge token")
+	}
+	now := time.Now().Unix()
+	if claims.Purpose != "meter-bridge" || claims.SubjectType == "" || claims.SubjectID == "" || claims.ExpiresAt <= now {
+		return meterBridgeClaims{}, errors.New("invalid or expired meter bridge token")
+	}
+	return claims, nil
+}
+
+func meterBridgeAccessKeyName(subjectType, subjectID string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(subjectType)) + "\x00" + strings.TrimSpace(subjectID)))
+	return "arc-bridge-" + strings.ToLower(strings.TrimSpace(subjectType)) + "-" + hex.EncodeToString(sum[:8])
 }
 
 func safeUserAccount(v controlplane.AccessKeyRecord) map[string]any {
@@ -1073,7 +1225,7 @@ func (s *Server) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o := s.service.Overview(r.Context())
-	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "redis": map[string]any{"enabled": o.RedisEnabled, "reachable": o.RedisReachable, "error": o.RedisError, "key_prefix": o.KeyPrefix, "access_key_mode": o.AccessKeyMode}, "meterry": map[string]any{"enabled": o.MeterryEnabled, "configured": o.MeterryConfigured, "reachable": o.MeterryReachable, "error": o.MeterryError, "project_id": o.ProjectID, "extractor_rule_set": o.ExtractorRuleSet}, "billing": map[string]any{"pending": o.Pending, "dead_letter": o.DeadLetter, "error": o.BillingError, "consumer_group": o.ConsumerGroup, "consumer_name": o.ConsumerName, "max_attempts": o.MaxAttempts}, "balance": map[string]any{"failure_mode": o.FailureMode, "cache_ttl_ms": o.BalanceCacheTTL.Milliseconds(), "negative_cache_ttl_ms": o.NegativeCacheTTL.Milliseconds()}, "refreshed_at": o.RefreshedAt})
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "redis": map[string]any{"enabled": o.RedisEnabled, "reachable": o.RedisReachable, "error": o.RedisError, "key_prefix": o.KeyPrefix, "access_key_mode": o.AccessKeyMode}, "billing": map[string]any{"enabled": o.BillingEnabled, "currency": o.Currency, "pending": o.Pending, "dead_letter": o.DeadLetter, "error": o.BillingError, "consumer_group": o.ConsumerGroup, "consumer_name": o.ConsumerName, "max_attempts": o.MaxAttempts}, "refreshed_at": o.RefreshedAt})
 }
 
 func (s *Server) handleAdminMeterAccessKeys(w http.ResponseWriter, r *http.Request) {
@@ -1169,7 +1321,6 @@ func safeAccessKey(v controlplane.AccessKeyRecord) map[string]any {
 		"subject_type":          v.SubjectType,
 		"subject_id":            v.SubjectID,
 		"account_id":            v.AccountID,
-		"meterry_account_id":    v.MeterryAccountID,
 		"provisioning":          v.Provisioning,
 		"provisioning_error":    v.ProvisioningError,
 		"route_policy_id":       v.RoutePolicyID,
@@ -1194,6 +1345,33 @@ func (s *Server) handleAdminAccessKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := parts[0]
+	if len(parts) == 2 && parts[1] == "routing" {
+		if r.Method != http.MethodPut {
+			writeMethodNotAllowed(w, http.MethodPut)
+			return
+		}
+		var in adminAccessKeyRoutingInput
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil {
+			writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: "invalid JSON"})
+			return
+		}
+		record, err := s.service.UpdateAccessKeyRouting(r.Context(), name, adminservice.UpdateAccessKeyRoutingInput{
+			AllowedProviders:    in.AllowedProviders,
+			AllowedModels:       in.AllowedModels,
+			ProviderKeyBindings: in.ProviderKeyBindings,
+			ExpectedVersion:     in.Version,
+		})
+		if errors.Is(err, controlplane.ErrAccessKeyVersionConflict) {
+			writeJSONAny(w, http.StatusConflict, adminAccessKeyResponse{Error: "access key changed; reload and try again"})
+			return
+		}
+		if err != nil {
+			writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: err.Error()})
+			return
+		}
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "record": safeAccessKey(*record)})
+		return
+	}
 	if len(parts) == 2 && parts[1] == "subject-state" {
 		if r.Method != http.MethodGet {
 			writeMethodNotAllowed(w, http.MethodGet)

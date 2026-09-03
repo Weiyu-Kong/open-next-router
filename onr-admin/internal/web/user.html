@@ -24,6 +24,10 @@
       <div><p class="tag">ACCESS KEY METER</p><h1 id="accountName">Account</h1></div>
       <button id="logout" class="quiet">Log out</button>
     </header>
+    <div id="bridgeNotice" class="bridge-notice hidden" aria-live="polite">
+      <strong id="bridgeNoticeTitle">Meter account ready</strong>
+      <span id="bridgeNoticeText">Opening your usage view.</span>
+    </div>
     <section class="balance">
       <div><p class="tag">AVAILABLE BALANCE</p><strong id="balance">--</strong><span id="currency"></span></div>
       <div class="balance-meta">
@@ -35,6 +39,10 @@
     <section class="controls">
       <div><p class="tag">USAGE WINDOW</p><h2>Consumption</h2></div>
       <div class="control-row">
+        <div class="dimension-switch" role="group" aria-label="Display dimension">
+          <button type="button" class="dimension-option active" data-dimension="tokens" aria-pressed="true">Tokens</button>
+          <button type="button" class="dimension-option" data-dimension="cost" aria-pressed="false">Cost</button>
+        </div>
         <select id="range" aria-label="Usage range">
           <option value="1">Last 24 hours</option>
           <option value="7" selected>Last 7 days</option>
@@ -54,8 +62,10 @@
       <label>Start<input id="startTime" type="datetime-local"></label>
       <label>End<input id="endTime" type="datetime-local"></label>
     </section>
-    <section id="usage" class="usage"><div class="loading">Loading usage...</div></section>
-    <section class="spend"><div class="tag">CHARGED AMOUNT</div><div id="bills" class="usage-grid"><div class="loading">Loading charges...</div></div></section>
+    <section class="usage-summary">
+      <div class="metric-heading"><div id="metricLabel" class="tag">TOKEN USAGE</div><span id="metricUnit">tokens</span></div>
+      <div id="usage" class="usage"><div class="loading">Loading usage...</div></div>
+    </section>
     <section class="requests"><div class="tag">RECENT REQUESTS</div><div id="requests" class="request-list"><div class="loading">Loading requests...</div></div></section>
     <p id="meterError" class="error"></p>
   </main>

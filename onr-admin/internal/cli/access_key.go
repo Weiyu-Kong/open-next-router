@@ -10,6 +10,7 @@ import (
 
 	"github.com/r9s-ai/open-next-router/onr-admin/internal/store"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/keystore"
+	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
 	"github.com/spf13/cobra"
@@ -63,6 +64,17 @@ func newAccessKeyCreateCmd() *cobra.Command {
 			AllowedModels:    parseCommaList(opts.allowedModels, false),
 		}
 		if err := client.CreateAccessKey(context.Background(), record); err != nil {
+			return err
+		}
+		cfg, err := config.Load(opts.cfgPath)
+		if err != nil {
+			return err
+		}
+		ledger, err := billing.New(client, billing.Config{Enabled: cfg.Billing.Enabled, Currency: cfg.Billing.Currency, InitialCredit: cfg.Billing.InitialCredit})
+		if err != nil {
+			return err
+		}
+		if err := ledger.ProvisionAccount(context.Background(), record.AccountID); err != nil {
 			return err
 		}
 		fmt.Printf("name=%s account=%s subject=%s/%s route_policy=%s providers=%s models=%s secret=%s\n", record.Name, record.AccountID, record.SubjectType, record.SubjectID, record.RoutePolicyID, strings.Join(record.AllowedProviders, ","), strings.Join(record.AllowedModels, ","), secret)
@@ -186,8 +198,8 @@ func addAccessKeyFlags(cmd *cobra.Command, opts *accessKeyOptions, subject bool)
 	cmd.Flags().StringVar(&opts.cfgPath, "config", opts.cfgPath, "config yaml path")
 	cmd.Flags().StringVar(&opts.name, "name", "", "access key name")
 	if subject {
-		cmd.Flags().StringVar(&opts.subjectType, "subject-type", opts.subjectType, "Meterry subject type")
-		cmd.Flags().StringVar(&opts.subjectID, "subject-id", "", "Meterry subject ID")
+		cmd.Flags().StringVar(&opts.subjectType, "subject-type", opts.subjectType, "Billing subject type")
+		cmd.Flags().StringVar(&opts.subjectID, "subject-id", "", "Billing subject ID")
 		cmd.Flags().StringVar(&opts.accountID, "account-id", "", "Account ID; defaults to subject ID")
 		cmd.Flags().StringVar(&opts.routePolicyID, "route-policy-id", "", "Route policy ID for future access control")
 		cmd.Flags().StringVar(&opts.allowedProviders, "allowed-providers", "", "Comma-separated provider allowlist")

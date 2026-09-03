@@ -16,8 +16,8 @@ import (
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/requestvalidate"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/trafficdump"
 	"github.com/r9s-ai/open-next-router/onr/internal/auth"
-	"github.com/r9s-ai/open-next-router/onr/internal/meterry"
 	"github.com/r9s-ai/open-next-router/onr/internal/proxy"
+	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 )
 
@@ -30,7 +30,7 @@ const (
 	ctxKeyRequestContentType = "onr.request_content_type"
 )
 
-func makeHandler(cfg *config.Config, st *state, pclient *proxy.Client, api string, requestIDHeaderKey string, billing *meterry.Client) gin.HandlerFunc {
+func makeHandler(cfg *config.Config, st *state, pclient *proxy.Client, api string, requestIDHeaderKey string, billing *billing.Ledger) gin.HandlerFunc {
 	requestIDHeaderKey = requestid.ResolveHeaderKey(requestIDHeaderKey)
 	return func(c *gin.Context) {
 		c.Set("onr.api", api)

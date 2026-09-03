@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -117,6 +118,35 @@ func TestAccessKeyRecordDefaultsAccountAndSubjectIDs(t *testing.T) {
 	}
 }
 
+func TestUpdateAccessKeyRoutingPreservesIdentityAndChecksVersion(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	record := AccessKeyRecord{
+		Name: "key-a", SecretHash: c.HashAccessKey("secret-a"), Status: "active",
+		SubjectType: "api_key", SubjectID: "subject-a", AccountID: "account-a",
+		AllowedProviders:    []string{"ctyun"},
+		ProviderKeyBindings: map[string]string{"ctyun": "primary"}, Version: 3,
+	}
+	if err := c.CreateAccessKey(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	record.ProviderKeyBindings = map[string]string{"ctyun": "secondary"}
+	record.AllowedModels = []string{"qwen3.8-max"}
+	if err := c.UpdateAccessKeyRouting(ctx, record, 3); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.GetAccessKeyRecord(ctx, "key-a")
+	if err != nil || got == nil {
+		t.Fatalf("record=(%+v,%v)", got, err)
+	}
+	if got.Version != 4 || got.ProviderKeyBindings["ctyun"] != "secondary" || got.SubjectID != "subject-a" || got.SecretHash != record.SecretHash {
+		t.Fatalf("updated record=%+v", got)
+	}
+	if err := c.UpdateAccessKeyRouting(ctx, record, 3); !errors.Is(err, ErrAccessKeyVersionConflict) {
+		t.Fatalf("stale update error=%v, want version conflict", err)
+	}
+}
+
 func TestActiveAccessKeyIsUniquePerAccount(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
@@ -225,6 +255,36 @@ func TestBillingStreamRoundTrip(t *testing.T) {
 	}
 	if err := c.AckBilling(ctx, messages[0].ID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLegacyBillingClaimReclaimsIdleMessage(t *testing.T) {
+	c := newTestClient(t)
+	ctx := context.Background()
+	if err := c.EnsureBillingGroup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.EnqueueBillingEvent(ctx, []byte(`{"idempotency_key":"onr:req-legacy"}`)); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := c.ReadBilling(ctx, 1, time.Second)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("initial billing read=(%+v,%v)", messages, err)
+	}
+	time.Sleep(5 * time.Millisecond)
+	c.billingConsumer = "replacement-consumer"
+	claimed, err := c.autoClaimBillingLegacy(ctx, time.Millisecond, 1)
+	if err != nil || len(claimed) != 1 || claimed[0].ID != messages[0].ID {
+		t.Fatalf("legacy claimed messages=(%+v,%v)", claimed, err)
+	}
+}
+
+func TestUnsupportedXAutoClaimDetection(t *testing.T) {
+	if !isUnsupportedXAutoClaim(errors.New("ERR unknown command 'XAUTOCLAIM'")) {
+		t.Fatal("expected Redis unknown-command error to enable legacy claim")
+	}
+	if isUnsupportedXAutoClaim(errors.New("connection refused")) {
+		t.Fatal("transport errors must not enable legacy claim")
 	}
 }
 

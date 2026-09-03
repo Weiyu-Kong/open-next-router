@@ -36,29 +36,22 @@ func renderOverview(snapshot overviewSnapshot, width int) string {
 			redisStatus = "reachable"
 		}
 	}
-	meterryStatus := "disabled"
-	if snapshot.MeterryEnabled {
-		meterryStatus = "not configured"
-		if snapshot.MeterryConfigured {
-			meterryStatus = "unreachable"
-			if snapshot.MeterryReachable {
-				meterryStatus = "reachable"
-			}
-		}
-	}
 	redis := card("Redis", cardWidth,
 		fmt.Sprintf("status       %s", redisStatus),
 		fmt.Sprintf("key prefix   %s", valueOrDash(snapshot.KeyPrefix)),
 		fmt.Sprintf("access mode  %s", valueOrDash(snapshot.AccessKeyMode)),
 		optionalError(snapshot.RedisError),
 	)
-	meterry := card("Meterry", cardWidth,
-		fmt.Sprintf("status       %s", meterryStatus),
-		fmt.Sprintf("project      %s", valueOrDash(snapshot.ProjectID)),
-		fmt.Sprintf("extractor    %s", valueOrDash(snapshot.ExtractorRuleSet)),
-		optionalError(snapshot.MeterryError),
+	billingState := "disabled"
+	if snapshot.BillingEnabled {
+		billingState = "enabled"
+	}
+	billing := card("Local billing", cardWidth,
+		fmt.Sprintf("status       %s", billingState),
+		fmt.Sprintf("currency     %s", valueOrDash(snapshot.Currency)),
+		fmt.Sprintf("ledger       Redis"),
 	)
-	billing := card("Billing stream", cardWidth,
+	stream := card("Billing stream", cardWidth,
 		fmt.Sprintf("pending      %d", snapshot.Pending),
 		fmt.Sprintf("dead-letter  %d", snapshot.DeadLetter),
 		fmt.Sprintf("group        %s", valueOrDash(snapshot.ConsumerGroup)),
@@ -66,14 +59,9 @@ func renderOverview(snapshot overviewSnapshot, width int) string {
 		fmt.Sprintf("max attempts %d", snapshot.MaxAttempts),
 		optionalError(snapshot.BillingError),
 	)
-	policy := card("Runtime policy", cardWidth,
-		fmt.Sprintf("balance mode %s", valueOrDash(snapshot.FailureMode)),
-		fmt.Sprintf("positive TTL %s", snapshot.BalanceCacheTTL),
-		fmt.Sprintf("negative TTL %s", snapshot.NegativeCacheTTL),
-	)
 	return lipgloss.JoinVertical(lipgloss.Left,
-		lipgloss.JoinHorizontal(lipgloss.Top, redis, meterry),
-		lipgloss.JoinHorizontal(lipgloss.Top, billing, policy),
+		lipgloss.JoinHorizontal(lipgloss.Top, redis, billing),
+		stream,
 		lipgloss.NewStyle().Faint(true).Render("Last refreshed: "+snapshot.RefreshedAt.Format(time.RFC3339)),
 	)
 }

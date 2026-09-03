@@ -3,14 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"sort"
 	"strings"
 	"time"
 
-	sdk "github.com/meterry-com/meterry-go"
-	"github.com/meterry-com/meterry-go/pkg/types"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/keystore"
+	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
 	"github.com/shopspring/decimal"
@@ -25,6 +23,13 @@ type CreateAccessKeyInput struct {
 	Metadata                        map[string]string
 }
 
+type UpdateAccessKeyRoutingInput struct {
+	AllowedProviders    string
+	AllowedModels       string
+	ProviderKeyBindings map[string]string
+	ExpectedVersion     int64
+}
+
 type WalletAdjustmentInput struct {
 	Amount         string
 	Currency       string
@@ -34,6 +39,7 @@ type WalletAdjustmentInput struct {
 
 type UserUsageQuery struct {
 	BucketSize string
+	Timezone   string
 	StartTime  int64
 	EndTime    int64
 	Metrics    []string
@@ -46,7 +52,7 @@ func (s *Service) BillingCurrency() string {
 	if s == nil || s.cfg == nil {
 		return "USD"
 	}
-	currency := strings.TrimSpace(s.cfg.Meterry.BalanceEnforcement.Currency)
+	currency := strings.TrimSpace(s.cfg.Billing.Currency)
 	if currency == "" {
 		return "USD"
 	}
@@ -54,12 +60,12 @@ func (s *Service) BillingCurrency() string {
 }
 
 type AccessKeyMeterSummary struct {
-	AccessKeyID string                             `json:"access_key_id"`
-	Status      string                             `json:"status"`
-	Balance     *types.VirtualWalletAmountSnapshot `json:"balance,omitempty"`
-	Usage       []types.UsageAnalyticsRow          `json:"usage,omitempty"`
-	Bills       []types.UsageBillRow               `json:"bills,omitempty"`
-	Error       string                             `json:"error,omitempty"`
+	AccessKeyID string                   `json:"access_key_id"`
+	Status      string                   `json:"status"`
+	Balance     *billing.BalanceSnapshot `json:"balance,omitempty"`
+	Usage       []billing.UsageRow       `json:"usage,omitempty"`
+	Bills       []billing.BillRow        `json:"bills,omitempty"`
+	Error       string                   `json:"error,omitempty"`
 }
 
 type MigrationReport struct {
@@ -68,22 +74,20 @@ type MigrationReport struct {
 }
 
 type Overview struct {
-	RedisEnabled, RedisReachable                        bool
-	RedisError, KeyPrefix, AccessKeyMode                string
-	MeterryEnabled, MeterryConfigured, MeterryReachable bool
-	MeterryError, ProjectID, ExtractorRuleSet           string
-	Pending, DeadLetter                                 int64
-	BillingError, ConsumerGroup, ConsumerName           string
-	MaxAttempts                                         int
-	FailureMode                                         string
-	BalanceCacheTTL, NegativeCacheTTL                   time.Duration
-	RefreshedAt                                         time.Time
+	RedisEnabled, RedisReachable              bool
+	RedisError, KeyPrefix, AccessKeyMode      string
+	BillingEnabled                            bool
+	Pending, DeadLetter                       int64
+	BillingError, ConsumerGroup, ConsumerName string
+	MaxAttempts                               int
+	Currency                                  string
+	RefreshedAt                               time.Time
 }
 
 type Service struct {
-	cfg     *config.Config
-	cp      *controlplane.Client
-	meterry *sdk.Client
+	cfg    *config.Config
+	cp     *controlplane.Client
+	ledger *billing.Ledger
 }
 
 func New(cfgPath string) (*Service, error) {
@@ -92,12 +96,6 @@ func New(cfgPath string) (*Service, error) {
 		return nil, err
 	}
 	s := &Service{cfg: cfg}
-	if cfg.Meterry.Enabled && strings.TrimSpace(cfg.Meterry.BaseURL) != "" && strings.TrimSpace(cfg.Meterry.APIKey) != "" {
-		s.meterry, err = sdk.NewClient(sdk.Config{BaseURL: cfg.Meterry.BaseURL, APIKey: cfg.Meterry.APIKey, HTTPClient: &http.Client{Timeout: 10 * time.Second}})
-		if err != nil {
-			return nil, fmt.Errorf("init Meterry client: %w", err)
-		}
-	}
 	if !cfg.Redis.Enabled {
 		return s, nil
 	}
@@ -105,7 +103,40 @@ func New(cfgPath string) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init Redis control plane: %w", err)
 	}
+	if cfg.Billing.Enabled {
+		s.ledger, err = billing.New(s.cp, billing.Config{Enabled: true, Currency: cfg.Billing.Currency, InitialCredit: cfg.Billing.InitialCredit})
+		if err != nil {
+			_ = s.cp.Close()
+			return nil, fmt.Errorf("init local billing: %w", err)
+		}
+		if err := s.initializeExistingLocalAccounts(context.Background()); err != nil {
+			_ = s.cp.Close()
+			return nil, fmt.Errorf("initialize local billing accounts: %w", err)
+		}
+	}
 	return s, nil
+}
+
+func (s *Service) initializeExistingLocalAccounts(ctx context.Context) error {
+	if s.ledger == nil || !s.ledger.Enabled() || s.cp == nil {
+		return nil
+	}
+	records, err := s.cp.ListAccessKeyRecords(ctx)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.Status != "active" && record.Status != "pending" {
+			continue
+		}
+		if strings.TrimSpace(record.AccountID) == "" {
+			continue
+		}
+		if err := s.ledger.ProvisionAccount(ctx, record.AccountID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (s *Service) Close() error {
 	if s == nil || s.cp == nil {
@@ -138,6 +169,43 @@ func (s *Service) GetAccessKey(ctx context.Context, name string) (*controlplane.
 		return nil, fmt.Errorf("redis access-key management is disabled")
 	}
 	return s.cp.GetAccessKeyRecord(ctx, name)
+}
+
+func (s *Service) UpdateAccessKeyRouting(ctx context.Context, name string, in UpdateAccessKeyRoutingInput) (*controlplane.AccessKeyRecord, error) {
+	if s.cp == nil {
+		return nil, fmt.Errorf("redis access-key management is disabled")
+	}
+	rec, err := s.cp.GetAccessKeyRecord(ctx, strings.TrimSpace(name))
+	if err != nil || rec == nil {
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("access key not found")
+	}
+	if rec.Version != in.ExpectedVersion {
+		return nil, controlplane.ErrAccessKeyVersionConflict
+	}
+	providers := parseCommaList(in.AllowedProviders, true)
+	bindings := normalizeProviderKeyBindings(in.ProviderKeyBindings)
+	if len(providers) > 0 {
+		allowed := make(map[string]struct{}, len(providers))
+		for _, provider := range providers {
+			allowed[provider] = struct{}{}
+		}
+		for provider := range bindings {
+			if _, ok := allowed[provider]; !ok {
+				return nil, fmt.Errorf("provider key binding %q is not in allowed providers", provider)
+			}
+		}
+	}
+	rec.AllowedProviders = providers
+	rec.AllowedModels = parseCommaList(in.AllowedModels, false)
+	rec.ProviderKeyBindings = bindings
+	if err := s.cp.UpdateAccessKeyRouting(ctx, *rec, in.ExpectedVersion); err != nil {
+		return nil, err
+	}
+	rec.Version = in.ExpectedVersion + 1
+	return rec, nil
 }
 
 // AuthenticateAccessKey resolves an active Access Key for the user portal.
@@ -178,23 +246,102 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 	if e = s.cp.CreateAccessKey(ctx, rec); e != nil {
 		return "", e
 	}
-	if !s.cfg.Meterry.Enabled {
+	if s.ledger != nil && s.ledger.Enabled() {
+		if e = s.ledger.ProvisionAccount(ctx, accountID); e != nil {
+			s.recordLocalProvisioningFailure(ctx, rec, e)
+			return secret, e
+		}
 		rec.Status = "active"
-		rec.Provisioning = "disabled"
+		rec.Provisioning = "ready"
 		if e = s.cp.PutAccessKey(ctx, rec); e != nil {
-			return "", e
+			return secret, e
 		}
 		return secret, nil
 	}
-	if s.meterry == nil {
-		e = fmt.Errorf("Meterry provisioning is not configured; retry the pending access key after configuration")
-		s.recordProvisioningFailure(ctx, rec, e)
-		return secret, e
-	}
-	if e = s.finishAccessKeyProvisioning(ctx, rec); e != nil {
+	rec.Status = "active"
+	rec.Provisioning = "ready"
+	if e = s.cp.PutAccessKey(ctx, rec); e != nil {
 		return secret, e
 	}
 	return secret, nil
+}
+
+func (s *Service) recordLocalProvisioningFailure(ctx context.Context, rec controlplane.AccessKeyRecord, cause error) {
+	rec.Status = "pending"
+	rec.Provisioning = "failed"
+	rec.ProvisioningError = "local billing provisioning failed"
+	_ = s.cp.PutAccessKey(ctx, rec)
+}
+
+func (s *Service) EnsureAccessKey(ctx context.Context, in CreateAccessKeyInput) (*controlplane.AccessKeyRecord, bool, error) {
+	if s.cp == nil {
+		return nil, false, fmt.Errorf("redis access-key management is disabled")
+	}
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		return nil, false, fmt.Errorf("access key name is required")
+	}
+	existing, err := s.cp.GetAccessKeyRecord(ctx, name)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing != nil {
+		if existing.Status == "pending" {
+			if err := s.ProvisionAccessKey(ctx, name); err != nil {
+				return nil, false, err
+			}
+			existing, err = s.cp.GetAccessKeyRecord(ctx, name)
+			if err != nil {
+				return nil, false, err
+			}
+		}
+		if existing == nil || existing.Status != "active" {
+			return nil, false, fmt.Errorf("access key %q is not active", name)
+		}
+		return existing, false, nil
+	}
+	if _, err := s.CreateAccessKey(ctx, in); err != nil {
+		created, readErr := s.cp.GetAccessKeyRecord(ctx, name)
+		if readErr != nil {
+			return nil, false, readErr
+		}
+		if created == nil {
+			return nil, false, err
+		}
+		if created.Status == "pending" {
+			if provisionErr := s.ProvisionAccessKey(ctx, name); provisionErr != nil {
+				return nil, false, provisionErr
+			}
+			created, readErr = s.cp.GetAccessKeyRecord(ctx, name)
+			if readErr != nil {
+				return nil, false, readErr
+			}
+		}
+		if created == nil || created.Status != "active" {
+			return nil, false, err
+		}
+		return created, true, nil
+	}
+	created, err := s.cp.GetAccessKeyRecord(ctx, name)
+	if err != nil {
+		return nil, true, err
+	}
+	if created == nil {
+		return nil, true, fmt.Errorf("access key %q not found after creation", name)
+	}
+	if created.Status == "pending" {
+		if err := s.ProvisionAccessKey(ctx, name); err != nil {
+			return nil, true, err
+		}
+		created, err = s.cp.GetAccessKeyRecord(ctx, name)
+		if err != nil {
+			return nil, true, err
+		}
+	}
+	if created.Status != "active" {
+		return nil, true, fmt.Errorf("access key %q is not active", name)
+	}
+	return created, true, nil
 }
 
 func normalizeProviderKeyBindings(input map[string]string) map[string]string {
@@ -215,9 +362,8 @@ func normalizeProviderKeyBindings(input map[string]string) map[string]string {
 	return out
 }
 
-// ProvisionAccessKey retries a pending Meterry setup without issuing a new
-// secret. It is safe to call repeatedly because account, wallet, and credit
-// operations use deterministic identities and idempotency keys.
+// ProvisionAccessKey retries local ledger account initialization without
+// issuing a new secret or granting initial credit twice.
 func (s *Service) ProvisionAccessKey(ctx context.Context, name string) error {
 	if s.cp == nil {
 		return fmt.Errorf("redis access-key management is disabled")
@@ -232,103 +378,16 @@ func (s *Service) ProvisionAccessKey(ctx context.Context, name string) error {
 	if rec.Status != "pending" {
 		return fmt.Errorf("access key provisioning status is %q", rec.Provisioning)
 	}
-	return s.finishAccessKeyProvisioning(ctx, *rec)
+	if s.ledger != nil && s.ledger.Enabled() {
+		if err := s.ledger.ProvisionAccount(ctx, rec.AccountID); err != nil {
+			return err
+		}
+		rec.Status, rec.Provisioning, rec.ProvisioningError = "active", "ready", ""
+		return s.cp.PutAccessKey(ctx, *rec)
+	}
+	return fmt.Errorf("local billing is disabled")
 }
 
-func (s *Service) finishAccessKeyProvisioning(ctx context.Context, rec controlplane.AccessKeyRecord) error {
-	accountID, err := s.provisionMeterry(ctx, rec)
-	if err != nil {
-		s.recordProvisioningFailure(ctx, rec, err)
-		return err
-	}
-	rec.MeterryAccountID = accountID
-	rec.AccountID = accountID
-	rec.Provisioning = "ready"
-	rec.ProvisioningError = ""
-	rec.Status = "active"
-	return s.cp.PutAccessKey(ctx, rec)
-}
-
-func (s *Service) recordProvisioningFailure(ctx context.Context, rec controlplane.AccessKeyRecord, cause error) {
-	rec.Status = "pending"
-	rec.Provisioning = "failed"
-	rec.ProvisioningError = provisioningFailureMessage(cause)
-	_ = s.cp.PutAccessKey(ctx, rec)
-}
-
-func provisioningFailureMessage(cause error) string {
-	message := cause.Error()
-	for _, stage := range []string{
-		"list Meterry accounts",
-		"create Meterry account",
-		"bind Meterry subject",
-		"list Meterry wallets",
-		"create Meterry wallet",
-		"credit Meterry initial balance",
-	} {
-		if strings.HasPrefix(message, stage+":") {
-			return stage + " failed"
-		}
-	}
-	if strings.HasPrefix(message, "Meterry provisioning is not configured") {
-		return "Meterry provisioning is not configured"
-	}
-	return "Meterry provisioning failed"
-}
-
-func (s *Service) provisionMeterry(ctx context.Context, rec controlplane.AccessKeyRecord) (string, error) {
-	if s.meterry == nil {
-		return "", fmt.Errorf("Meterry is not configured")
-	}
-	name := "onr-access-key:" + strings.TrimSpace(rec.Name)
-	accounts, err := s.meterry.Manager.ListAccountsForProject(ctx, s.cfg.Meterry.ProjectID)
-	if err != nil {
-		return "", fmt.Errorf("list Meterry accounts: %w", err)
-	}
-	var account *types.Account
-	for i := range accounts {
-		if accounts[i].Name == name {
-			account = &accounts[i]
-			break
-		}
-	}
-	if account == nil {
-		account, err = s.meterry.Manager.CreateAccountForProject(ctx, s.cfg.Meterry.ProjectID, types.CreateAccountRequest{Name: name, PrimarySubjectType: rec.SubjectType, PrimarySubjectID: rec.SubjectID})
-		if err != nil {
-			return "", fmt.Errorf("create Meterry account: %w", err)
-		}
-	}
-	accountID := strings.TrimSpace(account.ID)
-	if accountID == "" {
-		return "", fmt.Errorf("Meterry account has no id")
-	}
-	if _, err := s.meterry.Manager.BindSubjectForProject(ctx, s.cfg.Meterry.ProjectID, types.BindAccountSubjectRequest{AccountID: accountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID}); err != nil {
-		return "", fmt.Errorf("bind Meterry subject: %w", err)
-	}
-	currency := s.BillingCurrency()
-	wallets, err := s.meterry.Manager.ListWalletsForProject(ctx, s.cfg.Meterry.ProjectID, sdk.ListWalletsRequest{AccountID: accountID})
-	if err != nil {
-		return "", fmt.Errorf("list Meterry wallets: %w", err)
-	}
-	if len(wallets) == 0 {
-		if _, err := s.meterry.Manager.CreateWalletForProject(ctx, s.cfg.Meterry.ProjectID, types.CreateWalletRequest{AccountID: accountID, Currency: currency}); err != nil {
-			return "", fmt.Errorf("create Meterry wallet: %w", err)
-		}
-	}
-	amountText := strings.TrimSpace(s.cfg.Meterry.InitialCredit)
-	if amountText == "" || amountText == "0" {
-		return accountID, nil
-	}
-	amount, err := decimal.NewFromString(amountText)
-	if err != nil || amount.IsNegative() {
-		return "", fmt.Errorf("invalid Meterry initial_credit")
-	}
-	_, err = s.meterry.Manager.CreditWalletForProject(ctx, s.cfg.Meterry.ProjectID, types.CreditWalletRequest{AccountID: accountID, Currency: currency, Amount: amount, SourceType: "onr_access_key_initial_credit", SourceID: rec.Name, IdempotencyKey: "onr:initial-credit:" + rec.Name})
-	if err != nil {
-		return "", fmt.Errorf("credit Meterry initial balance: %w", err)
-	}
-	return accountID, nil
-}
 func (s *Service) RevokeAccessKey(ctx context.Context, name string) error {
 	if s.cp == nil {
 		return fmt.Errorf("redis access-key management is disabled")
@@ -336,116 +395,178 @@ func (s *Service) RevokeAccessKey(ctx context.Context, name string) error {
 	return s.cp.RevokeAccessKey(ctx, name)
 }
 
-func (s *Service) AdjustAccessKeyBalance(ctx context.Context, name, operation string, in WalletAdjustmentInput) (types.WalletLedgerEntry, error) {
-	var zero types.WalletLedgerEntry
-	if s.cp == nil || s.meterry == nil {
-		return zero, fmt.Errorf("Meterry wallet management is not configured")
-	}
-	rec, err := s.cp.GetAccessKeyRecord(ctx, strings.TrimSpace(name))
-	if err != nil || rec == nil {
+func (s *Service) AdjustAccessKeyBalance(ctx context.Context, name, operation string, in WalletAdjustmentInput) (billing.LedgerEntry, error) {
+	var zero billing.LedgerEntry
+	if s.ledger != nil && s.ledger.Enabled() {
+		rec, err := s.cp.GetAccessKeyRecord(ctx, strings.TrimSpace(name))
+		if err != nil || rec == nil {
+			if err != nil {
+				return zero, err
+			}
+			return zero, fmt.Errorf("access key not found")
+		}
+		credit := strings.EqualFold(strings.TrimSpace(operation), "credit")
+		if !credit && !strings.EqualFold(strings.TrimSpace(operation), "debit") {
+			return zero, fmt.Errorf("operation must be credit or debit")
+		}
+		if strings.TrimSpace(in.IdempotencyKey) == "" {
+			return zero, fmt.Errorf("idempotency_key is required")
+		}
+		if err := s.ledger.Adjust(ctx, rec.AccountID, in.IdempotencyKey, in.Amount, credit); err != nil {
+			return zero, err
+		}
+		account, err := s.ledger.ReadAccount(ctx, rec.AccountID)
 		if err != nil {
 			return zero, err
 		}
-		return zero, fmt.Errorf("access key not found")
-	}
-	accountID := strings.TrimSpace(rec.MeterryAccountID)
-	if accountID == "" {
-		accountID = strings.TrimSpace(rec.AccountID)
-	}
-	if accountID == "" {
-		return zero, fmt.Errorf("access key has no Meterry account")
-	}
-	amount, err := decimal.NewFromString(strings.TrimSpace(in.Amount))
-	if err != nil || !amount.IsPositive() {
-		return zero, fmt.Errorf("amount must be a positive decimal")
-	}
-	currency := strings.TrimSpace(in.Currency)
-	if currency == "" {
-		currency = s.BillingCurrency()
-	}
-	key := strings.TrimSpace(in.IdempotencyKey)
-	if key == "" {
-		return zero, fmt.Errorf("idempotency_key is required")
-	}
-	source := strings.TrimSpace(in.Reason)
-	if source == "" {
-		source = "administrator adjustment"
-	}
-	request := types.CreditWalletRequest{AccountID: accountID, Currency: currency, Amount: amount, SourceType: "onr_admin_adjustment", SourceID: source, IdempotencyKey: key}
-	if strings.EqualFold(strings.TrimSpace(operation), "credit") {
-		response, err := s.meterry.Manager.CreditWalletForProject(ctx, s.cfg.Meterry.ProjectID, request)
-		if err != nil {
-			return zero, fmt.Errorf("credit Meterry wallet: %w", err)
+		amount, _ := decimal.NewFromString(in.Amount)
+		if !credit {
+			amount = amount.Neg()
 		}
-		return response.LedgerEntry, nil
-	}
-	if strings.EqualFold(strings.TrimSpace(operation), "debit") {
-		response, err := s.meterry.Manager.DebitWalletForProject(ctx, s.cfg.Meterry.ProjectID, types.DebitWalletRequest{AccountID: accountID, Currency: currency, Amount: amount, SourceType: "onr_admin_adjustment", SourceID: source, IdempotencyKey: key})
-		if err != nil {
-			return zero, fmt.Errorf("debit Meterry wallet: %w", err)
+		op := "debit"
+		if credit {
+			op = "credit"
 		}
-		return response.LedgerEntry, nil
+		return billing.LedgerEntry{AccountID: rec.AccountID, Currency: account.Currency, Operation: op, Amount: amount.String(), BalanceAfter: account.Balance, IdempotencyKey: in.IdempotencyKey, CreatedAt: time.Now().Unix()}, nil
 	}
-	return zero, fmt.Errorf("operation must be credit or debit")
+	return zero, fmt.Errorf("local billing is disabled")
 }
 
-func (s *Service) ReadAccessKeyBalance(ctx context.Context, rec controlplane.AccessKeyRecord) (*types.VirtualWalletAmountSnapshot, error) {
-	if s.meterry == nil {
-		return nil, fmt.Errorf("Meterry is not configured")
+func (s *Service) ReadAccessKeyBalance(ctx context.Context, rec controlplane.AccessKeyRecord) (*billing.BalanceSnapshot, error) {
+	if s.ledger == nil || !s.ledger.Enabled() {
+		return nil, fmt.Errorf("local billing is disabled")
 	}
-	accountID := strings.TrimSpace(rec.MeterryAccountID)
-	if accountID == "" {
-		accountID = strings.TrimSpace(rec.AccountID)
+	account, err := s.ledger.ReadAccount(ctx, rec.AccountID)
+	if err != nil {
+		return nil, err
 	}
-	if accountID == "" {
-		return nil, fmt.Errorf("access key has no Meterry account")
-	}
-	currency := s.BillingCurrency()
-	return s.meterry.Manager.ReadVirtualWalletAmountForProject(ctx, s.cfg.Meterry.ProjectID, types.ReadVirtualWalletRequest{AccountID: accountID, Currency: currency})
+	return &billing.BalanceSnapshot{AccountID: account.AccountID, Currency: account.Currency, Balance: account.Balance, AvailableBalance: account.Balance}, nil
 }
 
-func (s *Service) ReadAccessKeyLimits(ctx context.Context, rec controlplane.AccessKeyRecord) (*types.VirtualWalletLimitsSnapshot, error) {
-	if s.meterry == nil {
-		return nil, fmt.Errorf("Meterry is not configured")
+func (s *Service) ReadAccessKeyLimits(ctx context.Context, rec controlplane.AccessKeyRecord) (*billing.LimitsSnapshot, error) {
+	if s.ledger == nil || !s.ledger.Enabled() {
+		return nil, fmt.Errorf("local billing is disabled")
 	}
-	currency := s.BillingCurrency()
-	accountID := strings.TrimSpace(rec.MeterryAccountID)
-	if accountID == "" {
-		accountID = strings.TrimSpace(rec.AccountID)
+	account, err := s.ledger.ReadAccount(ctx, rec.AccountID)
+	if err != nil {
+		return nil, err
 	}
-	return s.meterry.Manager.ReadVirtualWalletLimitsForProject(ctx, s.cfg.Meterry.ProjectID, types.ReadVirtualWalletRequest{AccountID: accountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Currency: currency})
+	return &billing.LimitsSnapshot{AccountID: account.AccountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Currency: account.Currency}, nil
 }
 
-func (s *Service) QueryAccessKeyUsage(ctx context.Context, rec controlplane.AccessKeyRecord, in UserUsageQuery) (*types.UsageAnalyticsQueryResponse, error) {
-	if s.meterry == nil {
-		return nil, fmt.Errorf("Meterry is not configured")
-	}
-	return s.meterry.Query.UsageForProject(ctx, s.cfg.Meterry.ProjectID, types.UsageAnalyticsQueryRequest{BucketSize: in.BucketSize, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Metrics: in.Metrics, StartTime: in.StartTime, EndTime: in.EndTime, GroupBy: in.GroupBy, Measures: in.Measures, Limit: in.Limit})
+func (s *Service) QueryAccessKeyUsage(ctx context.Context, rec controlplane.AccessKeyRecord, in UserUsageQuery) (*billing.UsageResponse, error) {
+	return s.queryLocalUsage(ctx, rec, in)
 }
 
-func (s *Service) QueryAccessKeyEvents(ctx context.Context, rec controlplane.AccessKeyRecord, startTime, endTime int64, limit int) (*types.ListUsageEventLogsResponse, error) {
-	if s.meterry == nil {
-		return nil, fmt.Errorf("Meterry is not configured")
+func (s *Service) QueryAccessKeyEvents(ctx context.Context, rec controlplane.AccessKeyRecord, startTime, endTime int64, limit int) (*billing.EventsResponse, error) {
+	if s.ledger != nil && s.ledger.Enabled() {
+		events, err := s.ledger.ReadEvents(ctx, rec.AccountID, time.Unix(startTime, 0), time.Unix(endTime, 0), limit)
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]billing.EventRecord, 0, len(events))
+		for _, event := range events {
+			metrics := map[string]any{"input_tokens": event.InputTokens, "output_tokens": event.OutputTokens, "cached_tokens": event.CachedTokens, "total_tokens": event.TotalTokens, "amount": decimal.New(event.AmountMicros, -6).StringFixed(6), "currency": event.Currency}
+			rows = append(rows, billing.EventRecord{OccurredAt: event.OccurredAt, ExternalEventID: event.RequestID, Labels: map[string]string{"model": event.Model}, Metrics: metrics})
+		}
+		return &billing.EventsResponse{UsageEvents: rows}, nil
 	}
-	return s.meterry.Query.ListProjectUsageEvents(ctx, s.cfg.Meterry.ProjectID, types.ListUsageEventLogsRequest{SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, StartTime: startTime, EndTime: endTime, Limit: limit})
+	return nil, fmt.Errorf("local billing is disabled")
 }
 
-func (s *Service) QueryAccessKeyBills(ctx context.Context, rec controlplane.AccessKeyRecord, startTime, endTime int64, timezone string, limit int) (*types.UsageBillQueryResponse, error) {
-	if s.meterry == nil {
-		return nil, fmt.Errorf("Meterry is not configured")
+func (s *Service) QueryAccessKeyBills(ctx context.Context, rec controlplane.AccessKeyRecord, startTime, endTime int64, timezone string, limit int) (*billing.BillsResponse, error) {
+	return s.queryLocalBills(ctx, rec, startTime, endTime, limit)
+}
+
+func localBucket(ts int64, size, timezone string) string {
+	loc, err := time.LoadLocation(strings.TrimSpace(timezone))
+	if err != nil {
+		loc = time.UTC
 	}
-	accountID := strings.TrimSpace(rec.MeterryAccountID)
-	if accountID == "" {
-		accountID = strings.TrimSpace(rec.AccountID)
+	d := time.Unix(ts, 0).In(loc)
+	switch strings.ToLower(strings.TrimSpace(size)) {
+	case "1d", "day", "days":
+		return d.Format("2006-01-02")
+	case "7d", "week", "weeks":
+		weekday := int(d.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		return d.AddDate(0, 0, -(weekday - 1)).Format("2006-01-02")
+	default:
+		return d.Format("2006-01-02T15:00:00-07:00")
 	}
-	return s.meterry.Query.BillForProject(ctx, s.cfg.Meterry.ProjectID, types.UsageBillQueryRequest{
-		Timezone: timezone, BillingAccountID: accountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID,
-		Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, StartTime: startTime, EndTime: endTime,
-		GroupBy: []string{"model"}, Limit: limit,
+}
+
+func (s *Service) localEvents(ctx context.Context, rec controlplane.AccessKeyRecord, start, end int64, limit int) ([]controlplane.LocalBillingEvent, error) {
+	return s.ledger.ReadEvents(ctx, rec.AccountID, time.Unix(start, 0), time.Unix(end, 0), limit)
+}
+
+func (s *Service) queryLocalUsage(ctx context.Context, rec controlplane.AccessKeyRecord, in UserUsageQuery) (*billing.UsageResponse, error) {
+	events, err := s.localEvents(ctx, rec, in.StartTime, in.EndTime, in.Limit)
+	if err != nil {
+		return nil, err
+	}
+	type aggregate struct{ input, output, cached, amount, count int64 }
+	groups := map[string]*aggregate{}
+	for _, event := range events {
+		key := localBucket(event.OccurredAt, in.BucketSize, in.Timezone) + "\x00" + event.Model
+		if groups[key] == nil {
+			groups[key] = &aggregate{}
+		}
+		g := groups[key]
+		g.input += event.InputTokens
+		g.output += event.OutputTokens
+		g.cached += event.CachedTokens
+		g.amount += event.AmountMicros
+		g.count++
+	}
+	rows := make([]billing.UsageRow, 0, len(groups))
+	for key, g := range groups {
+		parts := strings.SplitN(key, "\x00", 2)
+		rows = append(rows, billing.UsageRow{Dimensions: map[string]string{"bucket": parts[0], "model": parts[1]}, Measures: map[string]any{
+			"prompt_tokens": g.input, "completion_tokens": g.output, "cached_tokens": g.cached, "quantity": g.input + g.output + g.cached, "amount": decimal.New(g.amount, -6).StringFixed(6), "usage_event_count": g.count,
+		}})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Dimensions["bucket"] == rows[j].Dimensions["bucket"] {
+			return rows[i].Dimensions["model"] < rows[j].Dimensions["model"]
+		}
+		return rows[i].Dimensions["bucket"] < rows[j].Dimensions["bucket"]
 	})
+	return &billing.UsageResponse{Rows: rows}, nil
+}
+
+func (s *Service) queryLocalBills(ctx context.Context, rec controlplane.AccessKeyRecord, start, end int64, limit int) (*billing.BillsResponse, error) {
+	events, err := s.localEvents(ctx, rec, start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+	type aggregate struct{ input, output, cached, amount, count int64 }
+	groups := map[string]*aggregate{}
+	for _, event := range events {
+		if groups[event.Model] == nil {
+			groups[event.Model] = &aggregate{}
+		}
+		g := groups[event.Model]
+		g.input += event.InputTokens
+		g.output += event.OutputTokens
+		g.cached += event.CachedTokens
+		g.amount += event.AmountMicros
+		g.count++
+	}
+	rows := make([]billing.BillRow, 0, len(groups))
+	for model, g := range groups {
+		rows = append(rows, billing.BillRow{Dimensions: map[string]string{"model": model}, RequestCount: g.count, Amount: decimal.New(g.amount, -6).StringFixed(6), Metrics: map[string]billing.BillMetric{"prompt_tokens": {Quantity: g.input}, "completion_tokens": {Quantity: g.output}, "cached_tokens": {Quantity: g.cached}}})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Dimensions["model"] < rows[j].Dimensions["model"] })
+	return &billing.BillsResponse{Rows: rows}, nil
 }
 
 func (s *Service) BillingPendingForAccessKey(ctx context.Context, accessKeyID string) (int64, error) {
+	if s.ledger != nil && s.ledger.Enabled() {
+		return 0, nil
+	}
 	if s.cp == nil {
 		return 0, fmt.Errorf("redis billing state is disabled")
 	}
@@ -486,11 +607,7 @@ func (s *Service) ListAccessKeyMeterSummaries(ctx context.Context, startTime, en
 		} else {
 			row.Usage = usage.Rows
 		}
-		billingAccountID := strings.TrimSpace(rec.MeterryAccountID)
-		if billingAccountID == "" {
-			billingAccountID = strings.TrimSpace(rec.AccountID)
-		}
-		bills, billErr := s.meterry.Query.BillForProject(ctx, s.cfg.Meterry.ProjectID, types.UsageBillQueryRequest{Timezone: "UTC", BillingAccountID: billingAccountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, StartTime: startTime, EndTime: endTime, GroupBy: []string{"model"}, Limit: 1000})
+		bills, billErr := s.QueryAccessKeyBills(ctx, rec, startTime, endTime, "UTC", 1000)
 		if billErr != nil {
 			if row.Error == "" {
 				row.Error = "billing unavailable"
@@ -535,16 +652,11 @@ func (s *Service) Overview(ctx context.Context) Overview {
 	o.RedisEnabled = c.Redis.Enabled
 	o.KeyPrefix = c.Redis.KeyPrefix
 	o.AccessKeyMode = c.Redis.AccessKeyMode
-	o.MeterryEnabled = c.Meterry.Enabled
-	o.MeterryConfigured = strings.TrimSpace(c.Meterry.BaseURL) != "" && strings.TrimSpace(c.Meterry.ProjectID) != "" && strings.TrimSpace(c.Meterry.APIKey) != ""
-	o.ProjectID = redact(c.Meterry.ProjectID)
-	o.ExtractorRuleSet = redact(c.Meterry.ExtractorRuleSet)
+	o.BillingEnabled = c.Billing.Enabled
+	o.Currency = s.BillingCurrency()
 	o.ConsumerGroup = c.Redis.BillingConsumerGroup
 	o.MaxAttempts = c.Redis.BillingMaxAttempts
 	o.ConsumerName = c.Redis.BillingConsumerName
-	o.FailureMode = c.Meterry.BalanceEnforcement.FailureMode
-	o.BalanceCacheTTL = c.Meterry.BalanceCacheTTL()
-	o.NegativeCacheTTL = c.Meterry.BalanceNegativeCacheTTL()
 	if s.cp != nil {
 		o.ConsumerName = s.cp.BillingConsumerName()
 		if e := s.cp.Ping(ctx); e != nil {
@@ -552,10 +664,7 @@ func (s *Service) Overview(ctx context.Context) Overview {
 		} else {
 			o.RedisReachable = true
 		}
-		o.Pending, o.DeadLetter, o.BillingError = safeBilling(ctx, s.cp, c.Meterry.Enabled)
-	}
-	if o.MeterryEnabled && o.MeterryConfigured {
-		o.MeterryReachable, o.MeterryError = meterryReachable(ctx, c.Meterry.BaseURL)
+		o.Pending, o.DeadLetter, o.BillingError = safeBilling(ctx, s.cp, c.Billing.Enabled)
 	}
 	return o
 }
@@ -569,26 +678,6 @@ func safeBilling(ctx context.Context, cp *controlplane.Client, enabled bool) (in
 	}
 	return p, d, ""
 }
-func meterryReachable(ctx context.Context, base string) (bool, string) {
-	req, e := http.NewRequestWithContext(ctx, http.MethodHead, strings.TrimRight(base, "/"), nil)
-	if e != nil {
-		return false, e.Error()
-	}
-	resp, e := (&http.Client{Timeout: 2 * time.Second}).Do(req)
-	if e != nil {
-		return false, e.Error()
-	}
-	_ = resp.Body.Close()
-	return true, ""
-}
-func redact(v string) string {
-	v = strings.TrimSpace(v)
-	if len(v) <= 10 {
-		return v
-	}
-	return v[:6] + "..." + v[len(v)-4:]
-}
-
 func parseCommaList(raw string, lower bool) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))

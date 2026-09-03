@@ -3,16 +3,15 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/usageestimate"
+	"github.com/shopspring/decimal"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,32 +97,17 @@ type LoggingConfig struct {
 	AppNameInfer          AppNameInferConfig    `yaml:"appname_infer"`
 }
 
-type MeterryConfig struct {
-	Enabled             bool                 `yaml:"enabled"`
-	BaseURL             string               `yaml:"base_url"`
-	ProjectID           string               `yaml:"project_id"`
-	APIKey              string               `yaml:"api_key"`
-	ExtractorRuleSet    string               `yaml:"extractor_rule_set_id"`
-	OutboxDir           string               `yaml:"outbox_dir"`
-	RequestTimeoutMs    int                  `yaml:"request_timeout_ms"`
-	RetryIntervalMs     int                  `yaml:"retry_interval_ms"`
-	OnlyBillableSuccess *bool                `yaml:"only_billable_success"`
-	SubjectType         string               `yaml:"subject_type"`
-	FallbackSubjectID   string               `yaml:"fallback_subject_id"`
-	InitialCredit       string               `yaml:"initial_credit"`
-	BalanceEnforcement  MeterryBalanceConfig `yaml:"balance_enforcement"`
+type UserMeterConfig struct {
+	BridgeSecret string `yaml:"bridge_secret"`
 }
 
-type MeterryBalanceConfig struct {
-	Enabled             bool   `yaml:"enabled"`
-	Currency            string `yaml:"currency"`
-	FailureMode         string `yaml:"failure_mode"`
-	RequestTimeoutMs    int    `yaml:"request_timeout_ms"`
-	CacheTTLMS          int    `yaml:"cache_ttl_ms"`
-	NegativeCacheTTLMS  int    `yaml:"negative_cache_ttl_ms"`
-	WebhookPath         string `yaml:"webhook_path"`
-	WebhookSecret       string `yaml:"webhook_secret"`
-	TimestampToleranceS int    `yaml:"timestamp_tolerance_s"`
+// LocalBillingConfig controls ONR's self-hosted usage ledger. The ledger is
+// backed by the configured Redis control plane and does not call an external
+// billing service.
+type LocalBillingConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	Currency      string `yaml:"currency"`
+	InitialCredit string `yaml:"initial_credit"`
 }
 
 type RedisConfig struct {
@@ -140,52 +124,6 @@ type RedisConfig struct {
 	BillingConsumerName  string `yaml:"billing_consumer_name"`
 	BillingMaxAttempts   int    `yaml:"billing_max_attempts"`
 	AccessKeyHashSecret  string `yaml:"access_key_hash_secret"`
-}
-
-// ProviderUsageConfig controls server-side provider usage reconciliation.
-// Provider credentials are accepted only through environment overrides and are
-// never intended to be persisted in a configuration file or Redis.
-type ProviderUsageConfig struct {
-	Enabled          bool                  `yaml:"enabled"`
-	PollIntervalMs   int                   `yaml:"poll_interval_ms"`
-	CandidateLeaseMs int                   `yaml:"candidate_lease_ms"`
-	OpenRouter       OpenRouterUsageConfig `yaml:"openrouter"`
-}
-
-type OpenRouterUsageConfig struct {
-	Enabled          bool     `yaml:"enabled"`
-	Mode             string   `yaml:"mode"`
-	Endpoint         string   `yaml:"endpoint"`
-	RequestTimeoutMs int      `yaml:"request_timeout_ms"`
-	InternalKeyIDs   []string `yaml:"internal_key_ids"`
-	APIKey           string   `yaml:"-" json:"-"`
-}
-
-func (c *OpenRouterUsageConfig) UnmarshalYAML(value *yaml.Node) error {
-	type rawConfig struct {
-		Enabled          bool     `yaml:"enabled"`
-		Mode             string   `yaml:"mode"`
-		Endpoint         string   `yaml:"endpoint"`
-		RequestTimeoutMs int      `yaml:"request_timeout_ms"`
-		InternalKeyIDs   []string `yaml:"internal_key_ids"`
-	}
-	if value.Kind == yaml.MappingNode {
-		for i := 0; i+1 < len(value.Content); i += 2 {
-			if strings.TrimSpace(value.Content[i].Value) == "api_key" {
-				return errors.New("provider_usage.openrouter.api_key is forbidden in YAML; use ONR_OPENROUTER_USAGE_API_KEY")
-			}
-		}
-	}
-	var raw rawConfig
-	if err := value.Decode(&raw); err != nil {
-		return err
-	}
-	c.Enabled = raw.Enabled
-	c.Mode = raw.Mode
-	c.Endpoint = raw.Endpoint
-	c.RequestTimeoutMs = raw.RequestTimeoutMs
-	c.InternalKeyIDs = raw.InternalKeyIDs
-	return nil
 }
 
 type Config struct {
@@ -247,9 +185,9 @@ type Config struct {
 	} `yaml:"upstream_proxies"`
 
 	UsageEstimation usageestimate.Config `yaml:"usage_estimation"`
-	Meterry         MeterryConfig        `yaml:"meterry"`
+	Billing         LocalBillingConfig   `yaml:"billing"`
+	UserMeter       UserMeterConfig      `yaml:"user_meter"`
 	Redis           RedisConfig          `yaml:"redis"`
-	ProviderUsage   ProviderUsageConfig  `yaml:"provider_usage"`
 
 	TrafficDump struct {
 		Enabled     bool     `yaml:"enabled"`
@@ -372,30 +310,11 @@ func applyDefaults(cfg *Config) {
 	cfg.UpstreamProxies.ByProvider = normalizeProviderStringMap(cfg.UpstreamProxies.ByProvider)
 
 	usageestimate.ApplyDefaults(&cfg.UsageEstimation)
-	applyMeterryDefaults(&cfg.Meterry)
+	applyLocalBillingDefaults(&cfg.Billing)
+	applyUserMeterDefaults(&cfg.UserMeter)
 	applyRedisDefaults(&cfg.Redis)
-	applyProviderUsageDefaults(&cfg.ProviderUsage)
 	applyTrafficDumpDefaults(cfg)
 	applyLoggingDefaults(&cfg.Logging)
-}
-
-func applyProviderUsageDefaults(cfg *ProviderUsageConfig) {
-	if cfg.PollIntervalMs <= 0 {
-		cfg.PollIntervalMs = 60000
-	}
-	if cfg.CandidateLeaseMs <= 0 {
-		cfg.CandidateLeaseMs = 30000
-	}
-	if strings.TrimSpace(cfg.OpenRouter.Endpoint) == "" {
-		cfg.OpenRouter.Endpoint = "https://openrouter.ai/api/v1/generation"
-	}
-	if cfg.OpenRouter.RequestTimeoutMs <= 0 {
-		cfg.OpenRouter.RequestTimeoutMs = 5000
-	}
-	if strings.TrimSpace(cfg.OpenRouter.Mode) == "" {
-		cfg.OpenRouter.Mode = "authoritative"
-	}
-	cfg.OpenRouter.InternalKeyIDs = normalizeStringList(cfg.OpenRouter.InternalKeyIDs)
 }
 
 func applyRedisDefaults(cfg *RedisConfig) {
@@ -412,7 +331,7 @@ func applyRedisDefaults(cfg *RedisConfig) {
 		cfg.AccessKeyMode = "redis_preferred"
 	}
 	if strings.TrimSpace(cfg.BillingStream) == "" {
-		cfg.BillingStream = "meterry:events"
+		cfg.BillingStream = "onr:billing-events"
 	}
 	if strings.TrimSpace(cfg.BillingConsumerGroup) == "" {
 		cfg.BillingConsumerGroup = "onr-billing"
@@ -422,44 +341,16 @@ func applyRedisDefaults(cfg *RedisConfig) {
 	}
 }
 
-func applyMeterryDefaults(cfg *MeterryConfig) {
-	if strings.TrimSpace(cfg.OutboxDir) == "" {
-		cfg.OutboxDir = "./run/meterry"
+func applyLocalBillingDefaults(cfg *LocalBillingConfig) {
+	if strings.TrimSpace(cfg.Currency) == "" {
+		cfg.Currency = "CNY"
 	}
-	if cfg.RequestTimeoutMs <= 0 {
-		cfg.RequestTimeoutMs = 3000
+	if strings.TrimSpace(cfg.InitialCredit) == "" {
+		cfg.InitialCredit = "0"
 	}
-	if cfg.RetryIntervalMs <= 0 {
-		cfg.RetryIntervalMs = 1000
-	}
-	if strings.TrimSpace(cfg.SubjectType) == "" {
-		cfg.SubjectType = "api_key"
-	}
-	if cfg.OnlyBillableSuccess == nil {
-		v := true
-		cfg.OnlyBillableSuccess = &v
-	}
-	if strings.TrimSpace(cfg.BalanceEnforcement.Currency) == "" {
-		cfg.BalanceEnforcement.Currency = "USD"
-	}
-	if strings.TrimSpace(cfg.BalanceEnforcement.FailureMode) == "" {
-		cfg.BalanceEnforcement.FailureMode = "closed"
-	}
-	if cfg.BalanceEnforcement.RequestTimeoutMs <= 0 {
-		cfg.BalanceEnforcement.RequestTimeoutMs = 1000
-	}
-	if cfg.BalanceEnforcement.CacheTTLMS <= 0 {
-		cfg.BalanceEnforcement.CacheTTLMS = 3000
-	}
-	if cfg.BalanceEnforcement.NegativeCacheTTLMS <= 0 {
-		cfg.BalanceEnforcement.NegativeCacheTTLMS = 1000
-	}
-	if strings.TrimSpace(cfg.BalanceEnforcement.WebhookPath) == "" {
-		cfg.BalanceEnforcement.WebhookPath = "/internal/meterry/webhook"
-	}
-	if cfg.BalanceEnforcement.TimestampToleranceS <= 0 {
-		cfg.BalanceEnforcement.TimestampToleranceS = 300
-	}
+}
+
+func applyUserMeterDefaults(cfg *UserMeterConfig) {
 }
 
 func applyTrafficDumpDefaults(cfg *Config) {
@@ -501,37 +392,10 @@ func applyEnvOverrides(cfg *Config) {
 	applyEnvServerAuthOverrides(cfg)
 	applyEnvProviderAndDataOverrides(cfg)
 	applyProviderProxyEnvOverrides(cfg)
-	applyEnvMeterryOverrides(cfg)
+	applyEnvUserMeterOverrides(cfg)
 	applyEnvRedisOverrides(cfg)
-	applyEnvProviderUsageOverrides(cfg)
 	applyEnvTrafficDumpOverrides(cfg)
 	applyEnvLoggingOverrides(cfg)
-}
-
-func applyEnvProviderUsageOverrides(cfg *Config) {
-	cfg.ProviderUsage.Enabled = envBool("ONR_PROVIDER_USAGE_ENABLED", cfg.ProviderUsage.Enabled)
-	if n, ok := envInt("ONR_PROVIDER_USAGE_POLL_INTERVAL_MS"); ok && n > 0 {
-		cfg.ProviderUsage.PollIntervalMs = n
-	}
-	if n, ok := envInt("ONR_PROVIDER_USAGE_CANDIDATE_LEASE_MS"); ok && n > 0 {
-		cfg.ProviderUsage.CandidateLeaseMs = n
-	}
-	cfg.ProviderUsage.OpenRouter.Enabled = envBool("ONR_OPENROUTER_USAGE_ENABLED", cfg.ProviderUsage.OpenRouter.Enabled)
-	if v := strings.TrimSpace(os.Getenv("ONR_OPENROUTER_USAGE_MODE")); v != "" {
-		cfg.ProviderUsage.OpenRouter.Mode = v
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_OPENROUTER_USAGE_ENDPOINT")); v != "" {
-		cfg.ProviderUsage.OpenRouter.Endpoint = v
-	}
-	if n, ok := envInt("ONR_OPENROUTER_USAGE_REQUEST_TIMEOUT_MS"); ok && n > 0 {
-		cfg.ProviderUsage.OpenRouter.RequestTimeoutMs = n
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_OPENROUTER_USAGE_INTERNAL_KEY_IDS")); v != "" {
-		cfg.ProviderUsage.OpenRouter.InternalKeyIDs = normalizeStringList(strings.Split(v, ","))
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_OPENROUTER_USAGE_API_KEY")); v != "" {
-		cfg.ProviderUsage.OpenRouter.APIKey = v
-	}
 }
 
 func applyEnvRedisOverrides(cfg *Config) {
@@ -572,53 +436,9 @@ func applyEnvRedisOverrides(cfg *Config) {
 	}
 }
 
-func applyEnvMeterryOverrides(cfg *Config) {
-	cfg.Meterry.Enabled = envBool("ONR_METERRY_ENABLED", cfg.Meterry.Enabled)
-	if v := strings.TrimSpace(os.Getenv("ONR_METERRY_BASE_URL")); v != "" {
-		cfg.Meterry.BaseURL = v
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_METERRY_PROJECT_ID")); v != "" {
-		cfg.Meterry.ProjectID = v
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_METERRY_API_KEY")); v != "" {
-		cfg.Meterry.APIKey = v
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_METERRY_EXTRACTOR_RULE_SET_ID")); v != "" {
-		cfg.Meterry.ExtractorRuleSet = v
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_METERRY_OUTBOX_DIR")); v != "" {
-		cfg.Meterry.OutboxDir = v
-	}
-	if n, ok := envInt("ONR_METERRY_REQUEST_TIMEOUT_MS"); ok && n > 0 {
-		cfg.Meterry.RequestTimeoutMs = n
-	}
-	if n, ok := envInt("ONR_METERRY_RETRY_INTERVAL_MS"); ok && n > 0 {
-		cfg.Meterry.RetryIntervalMs = n
-	}
-	cfg.Meterry.BalanceEnforcement.Enabled = envBool("ONR_METERRY_BALANCE_ENABLED", cfg.Meterry.BalanceEnforcement.Enabled)
-	if v := strings.TrimSpace(os.Getenv("ONR_METERRY_BALANCE_CURRENCY")); v != "" {
-		cfg.Meterry.BalanceEnforcement.Currency = v
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_METERRY_BALANCE_FAILURE_MODE")); v != "" {
-		cfg.Meterry.BalanceEnforcement.FailureMode = v
-	}
-	if n, ok := envInt("ONR_METERRY_BALANCE_REQUEST_TIMEOUT_MS"); ok && n > 0 {
-		cfg.Meterry.BalanceEnforcement.RequestTimeoutMs = n
-	}
-	if n, ok := envInt("ONR_METERRY_BALANCE_CACHE_TTL_MS"); ok && n > 0 {
-		cfg.Meterry.BalanceEnforcement.CacheTTLMS = n
-	}
-	if n, ok := envInt("ONR_METERRY_BALANCE_NEGATIVE_CACHE_TTL_MS"); ok && n > 0 {
-		cfg.Meterry.BalanceEnforcement.NegativeCacheTTLMS = n
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_METERRY_WEBHOOK_PATH")); v != "" {
-		cfg.Meterry.BalanceEnforcement.WebhookPath = v
-	}
-	if v := strings.TrimSpace(os.Getenv("ONR_METERRY_WEBHOOK_SECRET")); v != "" {
-		cfg.Meterry.BalanceEnforcement.WebhookSecret = v
-	}
-	if n, ok := envInt("ONR_METERRY_WEBHOOK_TIMESTAMP_TOLERANCE_S"); ok && n > 0 {
-		cfg.Meterry.BalanceEnforcement.TimestampToleranceS = n
+func applyEnvUserMeterOverrides(cfg *Config) {
+	if v := strings.TrimSpace(os.Getenv("ONR_USER_METER_BRIDGE_SECRET")); v != "" {
+		cfg.UserMeter.BridgeSecret = v
 	}
 }
 
@@ -755,63 +575,28 @@ func validate(cfg *Config) error {
 	if err := validateRuntime(cfg); err != nil {
 		return err
 	}
-	if err := validateMeterry(&cfg.Meterry); err != nil {
+	if err := validateLocalBilling(&cfg.Billing, &cfg.Redis); err != nil {
 		return err
 	}
 	if err := validateRedis(&cfg.Redis); err != nil {
 		return err
 	}
-	if err := validateProviderUsage(&cfg.ProviderUsage, cfg); err != nil {
-		return err
-	}
 	return nil
 }
 
-func validateProviderUsage(cfg *ProviderUsageConfig, root *Config) error {
-	if !cfg.Enabled && !cfg.OpenRouter.Enabled {
+func validateLocalBilling(cfg *LocalBillingConfig, redisCfg *RedisConfig) error {
+	if !cfg.Enabled {
 		return nil
 	}
-	if !root.Meterry.Enabled {
-		return errors.New("provider_usage requires meterry.enabled=true")
+	if redisCfg == nil || !redisCfg.Enabled {
+		return errors.New("billing.enabled=true requires redis.enabled=true")
 	}
-	if !root.Redis.Enabled {
-		return errors.New("provider_usage requires redis.enabled=true")
+	if strings.TrimSpace(cfg.Currency) == "" {
+		return errors.New("billing.currency is required when billing is enabled")
 	}
-	if cfg.PollIntervalMs <= 0 {
-		return errors.New("provider_usage.poll_interval_ms must be > 0")
-	}
-	if cfg.CandidateLeaseMs <= 0 {
-		return errors.New("provider_usage.candidate_lease_ms must be > 0")
-	}
-	if cfg.Enabled && !cfg.OpenRouter.Enabled {
-		return errors.New("provider_usage.enabled requires at least one enabled provider adapter")
-	}
-	if cfg.OpenRouter.Enabled {
-		if !cfg.Enabled {
-			return errors.New("provider_usage.openrouter.enabled requires provider_usage.enabled=true")
-		}
-		cfg.OpenRouter.Mode = strings.ToLower(strings.TrimSpace(cfg.OpenRouter.Mode))
-		if cfg.OpenRouter.Mode != "authoritative" {
-			return errors.New("provider_usage.openrouter.mode must be authoritative")
-		}
-		if strings.TrimSpace(cfg.OpenRouter.APIKey) == "" {
-			return errors.New("provider_usage.openrouter.api_key must be supplied by ONR_OPENROUTER_USAGE_API_KEY")
-		}
-		u, err := url.Parse(strings.TrimSpace(cfg.OpenRouter.Endpoint))
-		if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-			return errors.New("provider_usage.openrouter.endpoint must be an absolute HTTP(S) URL")
-		}
-		if cfg.OpenRouter.RequestTimeoutMs <= 0 {
-			return errors.New("provider_usage.openrouter.request_timeout_ms must be > 0")
-		}
-		if len(cfg.OpenRouter.InternalKeyIDs) == 0 {
-			return errors.New("provider_usage.openrouter.internal_key_ids must contain at least one opaque key ID")
-		}
-		for _, id := range cfg.OpenRouter.InternalKeyIDs {
-			if strings.ContainsAny(id, "\r\n") {
-				return errors.New("provider_usage.openrouter.internal_key_ids must not contain newlines")
-			}
-		}
+	amount, err := decimal.NewFromString(strings.TrimSpace(cfg.InitialCredit))
+	if err != nil || amount.IsNegative() {
+		return errors.New("billing.initial_credit must be a non-negative decimal")
 	}
 	return nil
 }
@@ -877,71 +662,6 @@ func validateRuntime(cfg *Config) error {
 		return errors.New("logging.access_log_rotate.max_age_days must be >= 0")
 	}
 	return nil
-}
-
-func validateMeterry(cfg *MeterryConfig) error {
-	if cfg.Enabled {
-		if strings.TrimSpace(cfg.BaseURL) == "" || strings.TrimSpace(cfg.ProjectID) == "" || strings.TrimSpace(cfg.APIKey) == "" || strings.TrimSpace(cfg.ExtractorRuleSet) == "" {
-			return errors.New("meterry requires base_url, project_id, api_key, and extractor_rule_set_id when enabled")
-		}
-		if cfg.RequestTimeoutMs <= 0 || cfg.RetryIntervalMs <= 0 {
-			return errors.New("meterry request_timeout_ms and retry_interval_ms must be > 0")
-		}
-	}
-	if !cfg.BalanceEnforcement.Enabled {
-		return nil
-	}
-	if !cfg.Enabled {
-		return errors.New("meterry.balance_enforcement.enabled requires meterry.enabled=true")
-	}
-	if strings.TrimSpace(cfg.BalanceEnforcement.Currency) == "" {
-		return errors.New("meterry.balance_enforcement.currency is required")
-	}
-	switch strings.ToLower(strings.TrimSpace(cfg.BalanceEnforcement.FailureMode)) {
-	case "open", "closed":
-		cfg.BalanceEnforcement.FailureMode = strings.ToLower(strings.TrimSpace(cfg.BalanceEnforcement.FailureMode))
-	default:
-		return errors.New("meterry.balance_enforcement.failure_mode must be open or closed")
-	}
-	if cfg.BalanceEnforcement.RequestTimeoutMs <= 0 {
-		return errors.New("meterry.balance_enforcement.request_timeout_ms must be > 0")
-	}
-	if cfg.BalanceEnforcement.CacheTTLMS <= 0 {
-		return errors.New("meterry.balance_enforcement.cache_ttl_ms must be > 0")
-	}
-	if cfg.BalanceEnforcement.NegativeCacheTTLMS <= 0 {
-		return errors.New("meterry.balance_enforcement.negative_cache_ttl_ms must be > 0")
-	}
-	if !strings.HasPrefix(strings.TrimSpace(cfg.BalanceEnforcement.WebhookPath), "/") {
-		return errors.New("meterry.balance_enforcement.webhook_path must start with /")
-	}
-	if strings.TrimSpace(cfg.BalanceEnforcement.WebhookSecret) == "" {
-		return errors.New("meterry.balance_enforcement.webhook_secret is required when balance enforcement is enabled")
-	}
-	if cfg.BalanceEnforcement.TimestampToleranceS <= 0 {
-		return errors.New("meterry.balance_enforcement.timestamp_tolerance_s must be > 0")
-	}
-	return nil
-}
-
-func (c MeterryConfig) RequestTimeout() time.Duration {
-	return time.Duration(c.RequestTimeoutMs) * time.Millisecond
-}
-
-func (c MeterryConfig) RetryInterval() time.Duration {
-	return time.Duration(c.RetryIntervalMs) * time.Millisecond
-}
-
-func (c MeterryConfig) BalanceRequestTimeout() time.Duration {
-	return time.Duration(c.BalanceEnforcement.RequestTimeoutMs) * time.Millisecond
-}
-
-func (c MeterryConfig) BalanceCacheTTL() time.Duration {
-	return time.Duration(c.BalanceEnforcement.CacheTTLMS) * time.Millisecond
-}
-
-func (c MeterryConfig) BalanceNegativeCacheTTL() time.Duration {
-	return time.Duration(c.BalanceEnforcement.NegativeCacheTTLMS) * time.Millisecond
 }
 
 func normalizeLogLevel(level string) (string, error) {

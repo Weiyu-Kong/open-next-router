@@ -4,6 +4,12 @@ const loginError = document.getElementById("loginError");
 const meterError = document.getElementById("meterError");
 const rangeControl = document.getElementById("range");
 const timezoneControl = document.getElementById("timezone");
+const bridgeNotice = document.getElementById("bridgeNotice");
+let displayDimension = "tokens";
+let usageRows = [];
+let requestRows = [];
+let billingCurrency = "";
+let bridgeNoticePending = new URLSearchParams(window.location.search).get("bridge") || "";
 
 const escapeText = value => String(value ?? "").replace(/[&<>\"']/g, character => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;",
@@ -85,6 +91,54 @@ function formatBucket(value) {
   return Number.isFinite(numeric) && numeric > 1000000000 ? formatTimestamp(numeric) : String(value || "");
 }
 
+function decimalValue(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatMeasure(value, dimension) {
+  const number = decimalValue(value);
+  const maximumFractionDigits = dimension === "cost" ? 6 : 2;
+  return number.toLocaleString([], {maximumFractionDigits});
+}
+
+function requestMeasure(metrics, dimension) {
+  return Object.values(metrics || {}).reduce((total, metric) => {
+    const value = dimension === "cost" ? metric?.amount : metric?.value;
+    return total + decimalValue(value);
+  }, 0);
+}
+
+function renderDimension() {
+  const cost = displayDimension === "cost";
+  meter.classList.toggle("cost-mode", cost);
+  document.getElementById("metricLabel").textContent = cost ? "CHARGED AMOUNT" : "TOKEN USAGE";
+  document.getElementById("metricUnit").textContent = cost ? (billingCurrency || "currency unavailable") : "tokens";
+  document.querySelectorAll(".dimension-option").forEach(button => {
+    const selected = button.dataset.dimension === displayDimension;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+  renderUsage(usageRows);
+  renderRequests(requestRows);
+}
+
+function showBridgeNotice() {
+  if (!bridgeNoticePending || !bridgeNotice) return;
+  const created = bridgeNoticePending === "created";
+  document.getElementById("bridgeNoticeTitle").textContent = created ? "New meter account created" : "Meter account ready";
+  document.getElementById("bridgeNoticeText").textContent = created
+    ? "A new ARC key and billing account have been provisioned for this ARC-Bench identity."
+    : "Signed in with your existing ARC-Bench meter account.";
+  bridgeNotice.classList.remove("hidden", "fade-out");
+  bridgeNoticePending = "";
+  window.history.replaceState({}, document.title, window.location.pathname);
+  window.setTimeout(() => {
+    bridgeNotice.classList.add("fade-out");
+    window.setTimeout(() => bridgeNotice.classList.add("hidden"), 320);
+  }, 2200);
+}
+
 async function load() {
   try {
     const me = await api("/api/user/me");
@@ -92,6 +146,7 @@ async function load() {
     meter.classList.remove("hidden");
     document.getElementById("accountName").textContent = me.account?.access_key_id || "Account";
     document.getElementById("accountId").textContent = me.account?.account_id || "--";
+    showBridgeNotice();
     await refresh();
   } catch (_) {
     login.classList.remove("hidden");
@@ -115,24 +170,25 @@ async function refresh() {
   meterError.textContent = "";
   document.getElementById("freshness").textContent = "Checking";
   document.getElementById("usage").innerHTML = '<div class="loading">Loading usage...</div>';
-  document.getElementById("bills").innerHTML = '<div class="loading">Loading charges...</div>';
   document.getElementById("requests").innerHTML = '<div class="loading">Loading requests...</div>';
   try {
     const query = selectedWindow();
     const balance = await api("/api/user/balance");
     const snapshot = balance.balance || {};
     document.getElementById("balance").textContent = snapshot.available_balance || snapshot.balance || "0";
-    document.getElementById("currency").textContent = balance.currency || snapshot.currency || "";
+    billingCurrency = balance.currency || snapshot.currency || "";
+    document.getElementById("currency").textContent = billingCurrency;
     await refreshFreshness();
 
     const usageQuery = new URLSearchParams(query);
     usageQuery.set("bucket", document.getElementById("bucket").value);
     const usage = await api(`/api/user/usage?${usageQuery}`);
-    renderUsage(usage.rows || []);
-    const bills = await api(`/api/user/bills?${query}`);
-    renderBills(bills.bills || [], bills.currency || "");
+    usageRows = usage.rows || [];
+    billingCurrency = usage.currency || billingCurrency;
     const requests = await api(`/api/user/requests?${query}`);
-    renderRequests(requests.requests || []);
+    requestRows = requests.requests || [];
+    billingCurrency = requests.currency || billingCurrency;
+    renderDimension();
   } catch (error) {
     showError(meterError, error);
     document.getElementById("usage").innerHTML = "";
@@ -147,7 +203,9 @@ function renderUsage(rows) {
   document.getElementById("usage").innerHTML = '<div class="usage-grid">' + rows.map(row => {
     const dimensions = row.dimensions || {};
     const measures = row.measures || {};
-    return `<article class="usage-card"><h3>${escapeText(dimensions.model || "All models")}</h3><strong>${escapeText(measures.quantity || "0")}</strong><small>${escapeText(formatBucket(dimensions.bucket))}</small></article>`;
+    const measure = displayDimension === "cost" ? measures.amount : measures.quantity;
+    const suffix = displayDimension === "cost" ? ` ${billingCurrency}` : " tokens";
+    return `<article class="usage-card"><h3>${escapeText(dimensions.model || "All models")}</h3><strong>${escapeText(formatMeasure(measure, displayDimension))}${escapeText(suffix)}</strong><small>${escapeText(formatBucket(dimensions.bucket))}</small></article>`;
   }).join("") + "</div>";
 }
 
@@ -156,15 +214,11 @@ function renderRequests(rows) {
     document.getElementById("requests").innerHTML = '<div class="loading">No requests recorded for this window.</div>';
     return;
   }
-  document.getElementById("requests").innerHTML = rows.map(row => `<div class="request-row"><small>${escapeText(formatTimestamp(row.occurred_at))}</small><span>${escapeText(row.model || "Model unavailable")}</span><small>${escapeText(row.request_id || "Request unavailable")}</small></div>`).join("");
-}
-
-function renderBills(rows, currency) {
-  if (!rows.length) {
-    document.getElementById("bills").innerHTML = '<div class="loading">No charges recorded for this window.</div>';
-    return;
-  }
-  document.getElementById("bills").innerHTML = rows.map(row => `<article class="usage-card"><h3>${escapeText(row.model || "All models")}</h3><strong>${escapeText(row.amount || "0")} ${escapeText(currency)}</strong><small>${escapeText(row.request_count || 0)} requests</small></article>`).join("");
+  document.getElementById("requests").innerHTML = rows.map(row => {
+    const measure = requestMeasure(row.metrics, displayDimension);
+    const suffix = displayDimension === "cost" ? ` ${billingCurrency}` : " tokens";
+    return `<div class="request-row"><small>${escapeText(formatTimestamp(row.occurred_at))}</small><span>${escapeText(row.model || "Model unavailable")}</span><small>${escapeText(row.request_id || "Request unavailable")}</small><strong>${escapeText(formatMeasure(measure, displayDimension))}${escapeText(suffix)}</strong></div>`;
+  }).join("");
 }
 
 document.getElementById("loginForm").addEventListener("submit", async event => {
@@ -185,6 +239,12 @@ document.getElementById("logout").onclick = async () => {
 };
 document.getElementById("refresh").onclick = refresh;
 document.getElementById("bucket").onchange = refresh;
+document.querySelectorAll(".dimension-option").forEach(button => {
+  button.onclick = () => {
+    displayDimension = button.dataset.dimension === "cost" ? "cost" : "tokens";
+    renderDimension();
+  };
+});
 rangeControl.onchange = () => {
   const custom = rangeControl.value === "custom";
   document.getElementById("customRange").classList.toggle("hidden", !custom);

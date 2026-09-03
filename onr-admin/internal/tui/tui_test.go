@@ -19,15 +19,6 @@ func TestParseMetadata(t *testing.T) {
 	}
 }
 
-func TestRedactIdentifier(t *testing.T) {
-	if got := redactIdentifier("proj_1234567890"); got != "proj_1...7890" {
-		t.Fatalf("redacted identifier=%q", got)
-	}
-	if got := redactIdentifier("short"); got != "short" {
-		t.Fatalf("short identifier=%q", got)
-	}
-}
-
 func TestAccessKeysModelIncludesAdministrativeStatuses(t *testing.T) {
 	m := newAccessKeysModel(nil)
 	expired := time.Now().Add(-time.Minute)

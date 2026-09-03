@@ -42,3 +42,6 @@ config/providers/*-test.conf
 .env
 .env.*
 .codex
+
+reference/
+meter.yaml

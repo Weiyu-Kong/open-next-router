@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,7 +50,6 @@ type AccessKeyRecord struct {
 	SubjectType         string            `json:"subject_type"`
 	SubjectID           string            `json:"subject_id"`
 	AccountID           string            `json:"account_id,omitempty"`
-	MeterryAccountID    string            `json:"meterry_account_id,omitempty"`
 	Provisioning        string            `json:"provisioning,omitempty"`
 	ProvisioningError   string            `json:"provisioning_error,omitempty"`
 	RoutePolicyID       string            `json:"route_policy_id,omitempty"`
@@ -61,6 +61,8 @@ type AccessKeyRecord struct {
 	Version             int64             `json:"version"`
 	Metadata            map[string]string `json:"metadata,omitempty"`
 }
+
+var ErrAccessKeyVersionConflict = errors.New("access key version conflict")
 
 type SubjectState struct {
 	Blocked       bool      `json:"blocked"`
@@ -74,6 +76,42 @@ type BalanceCacheValue struct {
 	Balance   string    `json:"balance"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
+
+// LocalBillingEvent is the normalized usage record stored by ONR's local
+// billing ledger. AmountMicros is the configured currency amount multiplied by
+// 1,000,000. The event is immutable after it is recorded.
+type LocalBillingEvent struct {
+	ID           string         `json:"id"`
+	RequestID    string         `json:"request_id"`
+	AccessKeyID  string         `json:"access_key_id"`
+	AccountID    string         `json:"account_id"`
+	SubjectType  string         `json:"subject_type,omitempty"`
+	SubjectID    string         `json:"subject_id,omitempty"`
+	Provider     string         `json:"provider"`
+	Model        string         `json:"model"`
+	API          string         `json:"api,omitempty"`
+	Status       int            `json:"status"`
+	Stream       bool           `json:"stream"`
+	OccurredAt   int64          `json:"occurred_at"`
+	InputTokens  int64          `json:"input_tokens"`
+	OutputTokens int64          `json:"output_tokens"`
+	CachedTokens int64          `json:"cached_tokens"`
+	TotalTokens  int64          `json:"total_tokens"`
+	AmountMicros int64          `json:"amount_micros"`
+	Currency     string         `json:"currency"`
+	PricingModel string         `json:"pricing_model,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+}
+
+type LocalBillingAccount struct {
+	AccountID     string `json:"account_id"`
+	Currency      string `json:"currency"`
+	CreditMicros  int64  `json:"credit_micros"`
+	SpentMicros   int64  `json:"spent_micros"`
+	BalanceMicros int64  `json:"balance_micros"`
+}
+
+var ErrLocalBillingDuplicate = errors.New("local billing event already recorded")
 
 type StreamMessage struct {
 	ID     string
@@ -282,6 +320,47 @@ return 1`
 		return fmt.Errorf("unexpected access key update result %d", result)
 	}
 	return nil
+}
+
+// UpdateAccessKeyRouting atomically replaces only routing fields when the
+// caller's record version still matches Redis. Billing identity and secret
+// fields are copied from the stored record by the caller and remain unchanged.
+func (c *Client) UpdateAccessKeyRouting(ctx context.Context, record AccessKeyRecord, expectedVersion int64) error {
+	if strings.TrimSpace(record.Name) == "" || strings.TrimSpace(record.SecretHash) == "" {
+		return errors.New("access key name and secret hash are required")
+	}
+	record = normalizeAccessKeyRecord(record)
+	record.Version = expectedVersion + 1
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	const updateScript = `
+local previous = redis.call('get', KEYS[1])
+if not previous then return 0 end
+local old = cjson.decode(previous)
+if tonumber(old.version or 0) ~= tonumber(ARGV[2]) then return -1 end
+redis.call('set', KEYS[1], ARGV[1])
+return 1`
+	var result int64
+	err = c.withTimeout(ctx, func(ctx context.Context) error {
+		var err error
+		result, err = c.rdb.Eval(ctx, updateScript, []string{c.accessKeyRecordKey(record.Name)}, raw, expectedVersion).Int64()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	switch result {
+	case 0:
+		return fmt.Errorf("access key %q not found", record.Name)
+	case -1:
+		return ErrAccessKeyVersionConflict
+	case 1:
+		return nil
+	default:
+		return fmt.Errorf("unexpected access key routing update result %d", result)
+	}
 }
 
 func (c *Client) CreateAccessKey(ctx context.Context, record AccessKeyRecord) error {
@@ -683,16 +762,225 @@ func (c *Client) BillingStats(ctx context.Context) (pending, deadLetter int64, e
 	return pending, deadLetter, err
 }
 
-func (c *Client) AutoClaimBilling(ctx context.Context, minIdle time.Duration, count int) ([]StreamMessage, error) {
-	var messages []redis.XMessage
+func (c *Client) localBillingKey(parts ...string) string {
+	values := []string{"billing"}
+	values = append(values, parts...)
+	return c.key(values...)
+}
+
+func (c *Client) localBillingAccountKey(accountID string) string {
+	return c.localBillingKey("account", accountID)
+}
+
+func (c *Client) localBillingEventKey(eventID string) string {
+	return c.localBillingKey("event", eventID)
+}
+
+// InitializeLocalBillingAccount creates an account once. Existing credit and
+// spend values are never overwritten, so retries cannot grant initial credit
+// twice.
+func (c *Client) InitializeLocalBillingAccount(ctx context.Context, accountID, currency string, creditMicros int64) error {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" || strings.TrimSpace(currency) == "" || creditMicros < 0 {
+		return errors.New("invalid local billing account")
+	}
+	return c.withTimeout(ctx, func(ctx context.Context) error {
+		return c.rdb.HSetNX(ctx, c.localBillingAccountKey(accountID), "currency", strings.ToUpper(strings.TrimSpace(currency))).Err()
+	})
+}
+
+// SetInitialLocalBillingCredit adds the initial credit only when the account
+// has not been initialized before. The idempotency key is global to the
+// account and makes retries safe.
+func (c *Client) SetInitialLocalBillingCredit(ctx context.Context, accountID, idempotencyKey, currency string, creditMicros int64) error {
+	if strings.TrimSpace(accountID) == "" || strings.TrimSpace(idempotencyKey) == "" || creditMicros < 0 {
+		return errors.New("invalid local billing credit")
+	}
+	const script = `
+if redis.call('exists', KEYS[1]) == 1 then return 0 end
+redis.call('set', KEYS[1], '1')
+redis.call('hsetnx', KEYS[2], 'currency', ARGV[2])
+redis.call('hincrby', KEYS[2], 'credit_micros', ARGV[1])
+return 1`
+	return c.withTimeout(ctx, func(ctx context.Context) error {
+		return c.rdb.Eval(ctx, script, []string{c.localBillingKey("adjustment", idempotencyKey), c.localBillingAccountKey(accountID)}, creditMicros, strings.ToUpper(strings.TrimSpace(currency))).Err()
+	})
+}
+
+// RecordLocalBillingEvent atomically deduplicates and records one usage event,
+// updates the account totals, and indexes the event by account and time.
+func (c *Client) RecordLocalBillingEvent(ctx context.Context, event LocalBillingEvent) error {
+	if strings.TrimSpace(event.ID) == "" || strings.TrimSpace(event.AccountID) == "" || event.AmountMicros < 0 {
+		return errors.New("invalid local billing event")
+	}
+	if event.OccurredAt <= 0 {
+		event.OccurredAt = time.Now().Unix()
+	}
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	const script = `
+if redis.call('exists', KEYS[1]) == 1 then return 0 end
+redis.call('set', KEYS[1], ARGV[1])
+redis.call('zadd', KEYS[3], ARGV[2], ARGV[3])
+redis.call('hincrby', KEYS[2], 'spent_micros', ARGV[4])
+redis.call('hincrby', KEYS[2], 'input_tokens', ARGV[5])
+redis.call('hincrby', KEYS[2], 'output_tokens', ARGV[6])
+redis.call('hincrby', KEYS[2], 'cached_tokens', ARGV[7])
+redis.call('hincrby', KEYS[2], 'total_tokens', ARGV[8])
+return 1`
+	var result int64
+	err = c.withTimeout(ctx, func(ctx context.Context) error {
+		result, err = c.rdb.Eval(ctx, script, []string{
+			c.localBillingEventKey(event.ID), c.localBillingAccountKey(event.AccountID), c.localBillingKey("events", event.AccountID),
+		}, string(raw), event.OccurredAt, event.ID, event.AmountMicros, event.InputTokens, event.OutputTokens, event.CachedTokens, event.TotalTokens).Int64()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if result == 0 {
+		return ErrLocalBillingDuplicate
+	}
+	return nil
+}
+
+func (c *Client) ReadLocalBillingAccount(ctx context.Context, accountID string) (LocalBillingAccount, error) {
+	var values map[string]string
 	err := c.withTimeout(ctx, func(ctx context.Context) error {
 		var err error
-		messages, _, err = c.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{Stream: c.key(c.billingStream), Group: c.billingGroup, Consumer: c.billingConsumer, MinIdle: minIdle, Start: "0-0", Count: int64(count)}).Result()
+		values, err = c.rdb.HGetAll(ctx, c.localBillingAccountKey(accountID)).Result()
+		return err
+	})
+	if err != nil {
+		return LocalBillingAccount{}, err
+	}
+	parse := func(name string) int64 { value, _ := strconv.ParseInt(values[name], 10, 64); return value }
+	return LocalBillingAccount{AccountID: accountID, Currency: values["currency"], CreditMicros: parse("credit_micros"), SpentMicros: parse("spent_micros"), BalanceMicros: parse("credit_micros") - parse("spent_micros")}, nil
+}
+
+func (c *Client) AdjustLocalBillingAccount(ctx context.Context, accountID, idempotencyKey string, deltaMicros int64, currency string) error {
+	if strings.TrimSpace(accountID) == "" || strings.TrimSpace(idempotencyKey) == "" || deltaMicros == 0 {
+		return errors.New("invalid local billing adjustment")
+	}
+	const script = `
+if redis.call('exists', KEYS[1]) == 1 then return 0 end
+redis.call('set', KEYS[1], '1')
+redis.call('hsetnx', KEYS[2], 'currency', ARGV[2])
+if ARGV[3] == 'credit' then redis.call('hincrby', KEYS[2], 'credit_micros', ARGV[1])
+else redis.call('hincrby', KEYS[2], 'spent_micros', ARGV[1]) end
+return 1`
+	operation := "debit"
+	amount := deltaMicros
+	if amount > 0 {
+		operation = "credit"
+	} else {
+		amount = -amount
+	}
+	return c.withTimeout(ctx, func(ctx context.Context) error {
+		return c.rdb.Eval(ctx, script, []string{c.localBillingKey("adjustment", idempotencyKey), c.localBillingAccountKey(accountID)}, amount, strings.ToUpper(strings.TrimSpace(currency)), operation).Err()
+	})
+}
+
+func (c *Client) ReadLocalBillingEvents(ctx context.Context, accountID string, start, end int64, limit int) ([]LocalBillingEvent, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	var ids []string
+	err := c.withTimeout(ctx, func(ctx context.Context) error {
+		var err error
+		ids, err = c.rdb.ZRangeByScore(ctx, c.localBillingKey("events", accountID), &redis.ZRangeBy{Min: fmt.Sprint(start), Max: fmt.Sprint(end), Offset: 0, Count: int64(limit)}).Result()
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	out := make([]LocalBillingEvent, 0, len(ids))
+	for _, id := range ids {
+		var raw string
+		err := c.withTimeout(ctx, func(ctx context.Context) error {
+			var err error
+			raw, err = c.rdb.Get(ctx, c.localBillingEventKey(id)).Result()
+			return err
+		})
+		if err != nil {
+			return nil, err
+		}
+		var event LocalBillingEvent
+		if err := json.Unmarshal([]byte(raw), &event); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, nil
+}
+
+func (c *Client) AutoClaimBilling(ctx context.Context, minIdle time.Duration, count int) ([]StreamMessage, error) {
+	var messages []redis.XMessage
+	err := c.withTimeout(ctx, func(ctx context.Context) error {
+		var err error
+		messages, _, err = c.rdb.XAutoClaim(ctx, &redis.XAutoClaimArgs{Stream: c.key(c.billingStream), Group: c.billingGroup, Consumer: c.billingConsumer, MinIdle: minIdle, Start: "0-0", Count: int64(count)}).Result()
+		if isUnsupportedXAutoClaim(err) {
+			messages, err = c.autoClaimBillingLegacy(ctx, minIdle, count)
+		}
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return normalizeStreamMessages(messages), nil
+}
+
+func isUnsupportedXAutoClaim(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unknown command") && strings.Contains(message, "xautoclaim")
+}
+
+func (c *Client) autoClaimBillingLegacy(ctx context.Context, minIdle time.Duration, count int) ([]redis.XMessage, error) {
+	if count <= 0 {
+		count = 1
+	}
+	scanCount := int64(count * 10)
+	if scanCount < 100 {
+		scanCount = 100
+	}
+	pending, err := c.rdb.XPendingExt(ctx, &redis.XPendingExtArgs{
+		Stream: c.key(c.billingStream),
+		Group:  c.billingGroup,
+		Start:  "-",
+		End:    "+",
+		Count:  scanCount,
+	}).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	ids := make([]string, 0, count)
+	for _, item := range pending {
+		if item.Idle < minIdle {
+			continue
+		}
+		ids = append(ids, item.ID)
+		if len(ids) == count {
+			break
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	return c.rdb.XClaim(ctx, &redis.XClaimArgs{
+		Stream:   c.key(c.billingStream),
+		Group:    c.billingGroup,
+		Consumer: c.billingConsumer,
+		MinIdle:  minIdle,
+		Messages: ids,
+	}).Result()
+}
+
+func normalizeStreamMessages(messages []redis.XMessage) []StreamMessage {
 	out := make([]StreamMessage, 0, len(messages))
 	for _, message := range messages {
 		values := map[string]string{}
@@ -701,7 +989,7 @@ func (c *Client) AutoClaimBilling(ctx context.Context, minIdle time.Duration, co
 		}
 		out = append(out, StreamMessage{ID: message.ID, Values: values})
 	}
-	return out, nil
+	return out
 }
 
 func (c *Client) IncrementBillingAttempt(ctx context.Context, streamID string) (int64, error) {

@@ -24,8 +24,8 @@ import (
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/models"
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/pricing"
 	"github.com/r9s-ai/open-next-router/onr/internal/logx"
-	"github.com/r9s-ai/open-next-router/onr/internal/meterry"
 	"github.com/r9s-ai/open-next-router/onr/internal/proxy"
+	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
 )
@@ -128,27 +128,13 @@ func Run(cfgPath string) error {
 	}
 	pclient.SetPricingResolver(pricingResolver)
 	pclient.SetPricingEnabled(cfg.Pricing.Enabled)
-	meterryClient, err := meterry.New(meterry.Config{
-		Enabled:                 cfg.Meterry.Enabled,
-		BaseURL:                 cfg.Meterry.BaseURL,
-		ProjectID:               cfg.Meterry.ProjectID,
-		APIKey:                  cfg.Meterry.APIKey,
-		ExtractorRuleSet:        cfg.Meterry.ExtractorRuleSet,
-		OutboxDir:               cfg.Meterry.OutboxDir,
-		RequestTimeout:          cfg.Meterry.RequestTimeout(),
-		RetryInterval:           cfg.Meterry.RetryInterval(),
-		BalanceEnabled:          cfg.Meterry.BalanceEnforcement.Enabled,
-		BalanceCurrency:         cfg.Meterry.BalanceEnforcement.Currency,
-		BalanceTimeout:          cfg.Meterry.BalanceRequestTimeout(),
-		BalanceCacheTTL:         cfg.Meterry.BalanceCacheTTL(),
-		BalanceNegativeCacheTTL: cfg.Meterry.BalanceNegativeCacheTTL(),
-		ControlPlane:            redisClient,
+	localBilling, err := billing.New(redisClient, billing.Config{
+		Enabled:       cfg.Billing.Enabled,
+		Currency:      cfg.Billing.Currency,
+		InitialCredit: cfg.Billing.InitialCredit,
 	})
 	if err != nil {
-		return fmt.Errorf("init meterry billing: %w", err)
-	}
-	if meterryClient != nil && meterryClient.Enabled() {
-		defer func() { _ = meterryClient.Close() }()
+		return fmt.Errorf("init local billing: %w", err)
 	}
 
 	st := &state{
@@ -176,7 +162,7 @@ func Run(cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("compile access_log_format: %w", err)
 	}
-	engine := NewRouter(cfg, st, reg, pclient, accessLogger, accessColor, "X-Onr-Request-Id", accessFormatter, meterryClient)
+	engine := NewRouter(cfg, st, reg, pclient, accessLogger, accessColor, "X-Onr-Request-Id", accessFormatter, localBilling)
 
 	logStartupSummary(sysLogger, cfg, cfgPath)
 	sysLogger.Info(logx.SystemCategoryServer, "open-next-router listening", map[string]any{

@@ -2,22 +2,22 @@ package onrserver
 
 import (
 	"context"
-	"log"
+	"fmt"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/r9s-ai/open-next-router/onr/internal/auth"
-	"github.com/r9s-ai/open-next-router/onr/internal/meterry"
 	"github.com/r9s-ai/open-next-router/onr/internal/proxy"
+	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 )
 
-func enqueueBillingEvent(cfg *config.Config, sink *meterry.Client, c *gin.Context, res *proxy.Result) {
+func enqueueBillingEvent(cfg *config.Config, sink *billing.Ledger, c *gin.Context, res *proxy.Result) {
 	if cfg == nil || sink == nil || !sink.Enabled() || c == nil || res == nil {
 		return
 	}
-	if cfg.Meterry.OnlyBillableSuccess != nil && *cfg.Meterry.OnlyBillableSuccess && (res.Status < 200 || res.Status >= 300) {
+	if res.Status < 200 || res.Status >= 300 {
 		return
 	}
 	rid := strings.TrimSpace(c.GetString("X-Onr-Request-Id"))
@@ -27,10 +27,9 @@ func enqueueBillingEvent(cfg *config.Config, sink *meterry.Client, c *gin.Contex
 	principal, _ := auth.PrincipalFromContext(c)
 	accessKeyID := strings.TrimSpace(principal.AccessKeyID)
 	accountID := strings.TrimSpace(principal.AccountID)
-	routePolicyID := strings.TrimSpace(principal.RoutePolicyID)
 	subjectType := strings.TrimSpace(principal.SubjectType)
 	if subjectType == "" {
-		subjectType = strings.TrimSpace(cfg.Meterry.SubjectType)
+		subjectType = "api_key"
 	}
 	subjectID := strings.TrimSpace(principal.SubjectID)
 	if subjectID == "" {
@@ -38,70 +37,64 @@ func enqueueBillingEvent(cfg *config.Config, sink *meterry.Client, c *gin.Contex
 		subjectID = strings.TrimSpace(c.GetString("onr.auth_subject_id"))
 	}
 	if subjectID == "" {
-		subjectID = strings.TrimSpace(cfg.Meterry.FallbackSubjectID)
+		subjectID = accessKeyID
 	}
 	if subjectID == "" {
 		return
 	}
-	var appname string
-	if c.Request != nil {
-		appname = c.GetHeader("appname")
+	usage := res.Usage
+	amount := "0"
+	cost := pricingHints(res.Cost)
+	if value, ok := cost["cost_total"].(float64); ok {
+		amount = fmt.Sprintf("%.6f", value)
 	}
-	event := meterry.NewEvent(
-		rid,
-		res.Provider,
-		res.API,
-		res.Model,
-		res.Stream,
-		res.Status,
-		res.UsageStage,
-		res.Usage,
-		subjectType,
-		subjectID,
-		appname,
-		pricingHints(res.Cost),
-		accessKeyID,
-		accountID,
-		routePolicyID,
-	)
-	if err := sink.Enqueue(event); err != nil {
-		// Billing is deliberately best-effort for the request path. The sink owns
-		// retryable delivery once the event is durably queued.
+	if err := sink.Record(requestContext(c), billing.UsageEvent{
+		RequestID: rid, AccessKeyID: accessKeyID, AccountID: accountID,
+		SubjectType: subjectType, SubjectID: subjectID, Provider: res.Provider,
+		Model: res.Model, API: res.API, Status: res.Status, Stream: res.Stream,
+		InputTokens:  numberInt64(usage, "prompt_tokens", "input_tokens"),
+		OutputTokens: numberInt64(usage, "completion_tokens", "output_tokens"),
+		CachedTokens: numberInt64(usage, "cached_tokens", "cache_read_tokens"),
+		TotalTokens:  numberInt64(usage, "total_tokens"), Amount: amount,
+		Currency:     costString(res.Cost, "cost_unit", sink.Currency()),
+		PricingModel: costString(res.Cost, "cost_model", res.Model),
+	}); err != nil {
+		// Billing is deliberately best-effort after a completed provider response.
 		return
 	}
 }
 
-func enforceBillingBalance(cfg *config.Config, sink *meterry.Client, c *gin.Context, requestIDHeaderKey string) bool {
-	if cfg == nil || sink == nil || !cfg.Meterry.BalanceEnforcement.Enabled || !sink.BalanceEnabled() || c == nil {
+func enforceBillingBalance(cfg *config.Config, sink *billing.Ledger, c *gin.Context, requestIDHeaderKey string) bool {
+	if cfg == nil || sink == nil || c == nil || !sink.Enabled() || !cfg.Billing.Enabled {
 		return true
 	}
-	principal, _ := auth.PrincipalFromContext(c)
-	subjectType := strings.TrimSpace(principal.SubjectType)
-	if subjectType == "" {
-		subjectType = strings.TrimSpace(cfg.Meterry.SubjectType)
-	}
-	subjectID := strings.TrimSpace(principal.SubjectID)
-	if subjectID == "" {
-		// Keep compatibility with callers/tests that set the legacy context key.
-		subjectID = strings.TrimSpace(c.GetString("onr.auth_subject_id"))
-	}
-	if subjectID == "" {
-		return true
-	}
-	allowed, err := sink.CheckBalance(requestContext(c), subjectType, subjectID)
-	if err != nil {
-		if strings.EqualFold(strings.TrimSpace(cfg.Meterry.BalanceEnforcement.FailureMode), "open") {
-			log.Printf("[ONR] WARN | meterry | balance lookup failed, allowing request | subject=%s/%s error=%v", subjectType, subjectID, err)
-			return true
-		}
-		writeOpenAIErrorWithStatus(c, requestIDHeaderKey, 503, "billing_error", "billing_unavailable", "billing balance service is unavailable")
-		return false
-	}
-	if !allowed {
-		writeOpenAIErrorWithStatus(c, requestIDHeaderKey, 402, "billing_error", "insufficient_balance", "account balance is insufficient")
-		return false
-	}
+	// Local billing is post-response accounting. It deliberately does not
+	// reserve an estimate or hard-stop low balances; concurrent requests may
+	// overspend slightly and the ledger records the actual final amount.
 	return true
+}
+
+func numberInt64(usage map[string]any, names ...string) int64 {
+	for _, name := range names {
+		if value, ok := usage[name]; ok {
+			switch v := value.(type) {
+			case int:
+				return int64(v)
+			case int64:
+				return v
+			case float64:
+				return int64(v)
+			}
+		}
+	}
+	return 0
+}
+
+func costString(cost map[string]any, name, fallback string) string {
+	if value, ok := cost[name].(string); ok && strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }
 
 func requestContext(c *gin.Context) context.Context {
@@ -113,7 +106,7 @@ func requestContext(c *gin.Context) context.Context {
 
 func pricingHints(cost map[string]any) map[string]any {
 	if len(cost) == 0 {
-		return nil
+		return map[string]any{}
 	}
 	unit := numberOr(cost["cost_rate_unit"], 1000000)
 	currency := "USD"
@@ -121,6 +114,9 @@ func pricingHints(cost map[string]any) map[string]any {
 		currency = strings.ToUpper(strings.TrimSpace(v))
 	}
 	out := map[string]any{}
+	if value, ok := cost["cost_total"].(float64); ok {
+		out["cost_total"] = value
+	}
 	for metric, key := range map[string]string{
 		"input_tokens":       "price_input",
 		"output_tokens":      "price_output",

@@ -13,8 +13,8 @@ import (
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/trafficdump"
 	"github.com/r9s-ai/open-next-router/onr/internal/auth"
 	"github.com/r9s-ai/open-next-router/onr/internal/logx"
-	"github.com/r9s-ai/open-next-router/onr/internal/meterry"
 	"github.com/r9s-ai/open-next-router/onr/internal/proxy"
+	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 )
 
@@ -28,11 +28,11 @@ func NewRouter(
 	accessLoggerColor bool,
 	requestIDHeaderKey string,
 	accessFormatter *logx.AccessLogFormatter,
-	billing ...*meterry.Client,
+	billingClients ...*billing.Ledger,
 ) *gin.Engine {
-	var billingClient *meterry.Client
-	if len(billing) > 0 {
-		billingClient = billing[0]
+	var billingClient *billing.Ledger
+	if len(billingClients) > 0 {
+		billingClient = billingClients[0]
 	}
 	resolvedRequestIDHeaderKey := requestid.ResolveHeaderKey(requestIDHeaderKey)
 	r := gin.New()
@@ -56,7 +56,7 @@ func NewRouter(
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	r.GET("/readyz", func(c *gin.Context) {
-		checks := gin.H{"redis": "disabled", "meterry": "disabled", "billing": "disabled"}
+		checks := gin.H{"redis": "disabled", "billing": "disabled"}
 		status := http.StatusOK
 		if st.redis != nil {
 			if err := st.redis.Ping(c.Request.Context()); err != nil {
@@ -65,9 +65,6 @@ func NewRouter(
 			} else {
 				checks["redis"] = "ok"
 			}
-		}
-		if billingClient != nil && billingClient.Enabled() {
-			checks["meterry"] = "configured"
 		}
 		if st.redis != nil && billingClient != nil && billingClient.Enabled() {
 			checks["billing"] = "ok"
@@ -81,9 +78,6 @@ func NewRouter(
 		}
 		c.JSON(status, gin.H{"ok": status == http.StatusOK, "checks": checks})
 	})
-	if billingClient != nil && cfg.Meterry.BalanceEnforcement.Enabled {
-		r.POST(cfg.Meterry.BalanceEnforcement.WebhookPath, meterryWebhookHandler(cfg, billingClient))
-	}
 
 	secured := r.Group("/")
 	secured.Use(auth.MiddlewareWithResolver(
@@ -97,7 +91,7 @@ func NewRouter(
 				if record != nil {
 					subjectType := strings.TrimSpace(record.SubjectType)
 					if subjectType == "" {
-						subjectType = strings.TrimSpace(cfg.Meterry.SubjectType)
+						subjectType = "api_key"
 					}
 					subjectID := strings.TrimSpace(record.SubjectID)
 					if subjectID == "" {
