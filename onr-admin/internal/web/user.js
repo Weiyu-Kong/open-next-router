@@ -23,7 +23,7 @@ async function api(path, options = {}) {
   } catch (_) {
     // The status code remains the source of truth for a non-JSON response.
   }
-  if (!response.ok) throw Error(data.error || "Request failed");
+  if (!response.ok) throw Error(data.error || "请求失败");
   return data;
 }
 
@@ -72,7 +72,7 @@ function selectedWindow() {
     start = end - Number(rangeControl.value || 7) * 86400000;
   }
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-    throw Error("Select a valid start and end time.");
+    throw Error("请选择有效的开始和结束时间。");
   }
   return new URLSearchParams({
     start: String(Math.floor(start / 1000)),
@@ -112,8 +112,8 @@ function requestMeasure(metrics, dimension) {
 function renderDimension() {
   const cost = displayDimension === "cost";
   meter.classList.toggle("cost-mode", cost);
-  document.getElementById("metricLabel").textContent = cost ? "CHARGED AMOUNT" : "TOKEN USAGE";
-  document.getElementById("metricUnit").textContent = cost ? (billingCurrency || "currency unavailable") : "tokens";
+  document.getElementById("metricLabel").textContent = cost ? "已扣费用" : "令牌用量";
+  document.getElementById("metricUnit").textContent = cost ? (billingCurrency || "货币未知") : "令牌";
   document.querySelectorAll(".dimension-option").forEach(button => {
     const selected = button.dataset.dimension === displayDimension;
     button.classList.toggle("active", selected);
@@ -126,10 +126,10 @@ function renderDimension() {
 function showBridgeNotice() {
   if (!bridgeNoticePending || !bridgeNotice) return;
   const created = bridgeNoticePending === "created";
-  document.getElementById("bridgeNoticeTitle").textContent = created ? "New meter account created" : "Meter account ready";
+  document.getElementById("bridgeNoticeTitle").textContent = created ? "已创建新的用量账户" : "用量账户已就绪";
   document.getElementById("bridgeNoticeText").textContent = created
-    ? "A new ARC key and billing account have been provisioned for this ARC-Bench identity."
-    : "Signed in with your existing ARC-Bench meter account.";
+    ? "已为当前身份配置新的访问密钥和计费账户。"
+    : "已使用现有用量账户登录。";
   bridgeNotice.classList.remove("hidden", "fade-out");
   bridgeNoticePending = "";
   window.history.replaceState({}, document.title, window.location.pathname);
@@ -144,7 +144,7 @@ async function load() {
     const me = await api("/api/user/me");
     login.classList.add("hidden");
     meter.classList.remove("hidden");
-    document.getElementById("accountName").textContent = me.account?.access_key_id || "Account";
+    document.getElementById("accountName").textContent = me.account?.access_key_id || "账户";
     document.getElementById("accountId").textContent = me.account?.account_id || "--";
     showBridgeNotice();
     await refresh();
@@ -158,19 +158,19 @@ async function refreshFreshness() {
   try {
     const freshness = await api("/api/user/freshness");
     const pending = Number(freshness.pending_billing_events || 0);
-    document.getElementById("freshness").textContent = pending === 0 ? "Up to date" : `${pending} pending`;
+    document.getElementById("freshness").textContent = pending === 0 ? "已同步" : `${pending} 条待处理`;
     document.getElementById("updated").textContent = new Date(freshness.as_of).toLocaleTimeString();
   } catch (_) {
-    document.getElementById("freshness").textContent = "Unavailable";
+    document.getElementById("freshness").textContent = "不可用";
     document.getElementById("updated").textContent = "--";
   }
 }
 
 async function refresh() {
   meterError.textContent = "";
-  document.getElementById("freshness").textContent = "Checking";
-  document.getElementById("usage").innerHTML = '<div class="loading">Loading usage...</div>';
-  document.getElementById("requests").innerHTML = '<div class="loading">Loading requests...</div>';
+  document.getElementById("freshness").textContent = "检查中";
+  document.getElementById("usage").innerHTML = '<div class="loading">正在加载用量...</div>';
+  document.getElementById("requests").innerHTML = '<div class="loading">正在加载请求...</div>';
   try {
     const query = selectedWindow();
     const balance = await api("/api/user/balance");
@@ -197,7 +197,7 @@ async function refresh() {
 
 function renderUsage(rows) {
   if (!rows.length) {
-    document.getElementById("usage").innerHTML = '<div class="loading">No usage recorded for this window.</div>';
+    document.getElementById("usage").innerHTML = '<div class="loading">此时间范围内暂无用量记录。</div>';
     return;
   }
   document.getElementById("usage").innerHTML = '<div class="usage-grid">' + rows.map(row => {
@@ -205,13 +205,13 @@ function renderUsage(rows) {
     const measures = row.measures || {};
     const measure = displayDimension === "cost" ? measures.amount : measures.quantity;
     const suffix = displayDimension === "cost" ? ` ${billingCurrency}` : " tokens";
-    return `<article class="usage-card"><h3>${escapeText(dimensions.model || "All models")}</h3><strong>${escapeText(formatMeasure(measure, displayDimension))}${escapeText(suffix)}</strong><small>${escapeText(formatBucket(dimensions.bucket))}</small></article>`;
+    return `<article class="usage-card"><h3>${escapeText(dimensions.model || "全部模型")}</h3><strong>${escapeText(formatMeasure(measure, displayDimension))}${escapeText(suffix)}</strong><small>${escapeText(formatBucket(dimensions.bucket))}</small></article>`;
   }).join("") + "</div>";
 }
 
 function renderRequests(rows) {
   if (!rows.length) {
-    document.getElementById("requests").innerHTML = '<div class="loading">No requests recorded for this window.</div>';
+    document.getElementById("requests").innerHTML = '<div class="loading">此时间范围内暂无请求记录。</div>';
     return;
   }
   document.getElementById("requests").innerHTML = rows.map(row => {
@@ -258,3 +258,7 @@ timezoneControl.onchange = () => {
 
 initializeTimezones();
 load();
+
+const meterTranslations={"Checking":"检查中","Unavailable":"不可用","Loading usage...":"正在加载用量...","Loading requests...":"正在加载请求...","Model unavailable":"模型未知","Request unavailable":"请求未知","currency unavailable":"货币未知"};
+function translateMeterUI(){const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);let n;while(n=walker.nextNode()){const original=n.nodeValue;let value=original;Object.entries(meterTranslations).forEach(([from,to])=>{value=value.split(from).join(to)});value=value.replace(/ tokens/g," 令牌").replace(/ All models/g," 全部模型");if(value!==original)n.nodeValue=value;}}
+new MutationObserver(translateMeterUI).observe(document.body,{subtree:true,childList:true,characterData:true});translateMeterUI();

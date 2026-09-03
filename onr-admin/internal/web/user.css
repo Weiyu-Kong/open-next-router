@@ -9,6 +9,8 @@
   --orange: #ffb15c;
   --red: #ff817d;
 }
+/* Light Chinese meter theme */
+:root{color-scheme:light;--ink:#24313d;--muted:#657483;--line:#d7e0e7;--bg:#f3f6f8;--panel:#fff;--teal:#176b63;--orange:#c16a25;--red:#b64242}body{background:var(--bg);color:var(--ink)}button{background:var(--teal);border-color:var(--teal);color:#fff}button.quiet{background:#fff;color:var(--ink);border-color:var(--line)}input,select{background:#fff;color:var(--ink);border-color:var(--line)}.login-panel,.balance,.usage-card{background:#fff;border-color:var(--line);box-shadow:0 14px 40px #25404a10}.login-panel{border-left-color:var(--teal)}.login h1,.meter h1,.controls h2,.balance strong,.usage-card strong{font-family:ui-sans-serif,system-ui,sans-serif;letter-spacing:-.02em}.tag{color:var(--teal)}.bridge-notice{border-color:#b9d9d3;background:#e8f4f1}.balance{border-top-color:var(--orange)}.balance strong{color:var(--orange)}.controls,.metric-heading,.request-list{border-color:var(--line)}.dimension-switch{border-color:var(--line)}.dimension-option{background:#f5f8fa;color:var(--muted);border-color:var(--line)}.dimension-option.active{background:var(--teal);color:#fff}.dimension-option[data-dimension="cost"].active{background:var(--orange)}.usage-grid{border-color:var(--line);background:var(--line)}.request-row{border-color:var(--line)}.request-row strong{color:var(--teal)}.cost-mode .request-row strong,.cost-mode .usage-card strong{color:var(--orange)}
 
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 Inter, ui-sans-serif, system-ui, sans-serif; }

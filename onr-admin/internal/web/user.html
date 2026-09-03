@@ -1,74 +1,9 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ONR Meter</title>
-  <link rel="stylesheet" href="/user.css">
-</head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>用量计量</title><link rel="stylesheet" href="/user.css"></head>
 <body>
-  <main id="login" class="login">
-    <div class="login-panel">
-      <p class="tag">ONR / METER</p>
-      <h1>Know your usage.</h1>
-      <p class="muted">Sign in with the Access Key you use for the gateway.</p>
-      <form id="loginForm">
-        <label>Access Key<input id="accessKey" type="password" autocomplete="off" required></label>
-        <button>Open meter</button>
-        <p id="loginError" class="error"></p>
-      </form>
-    </div>
-  </main>
-  <main id="meter" class="meter hidden">
-    <header>
-      <div><p class="tag">ACCESS KEY METER</p><h1 id="accountName">Account</h1></div>
-      <button id="logout" class="quiet">Log out</button>
-    </header>
-    <div id="bridgeNotice" class="bridge-notice hidden" aria-live="polite">
-      <strong id="bridgeNoticeTitle">Meter account ready</strong>
-      <span id="bridgeNoticeText">Opening your usage view.</span>
-    </div>
-    <section class="balance">
-      <div><p class="tag">AVAILABLE BALANCE</p><strong id="balance">--</strong><span id="currency"></span></div>
-      <div class="balance-meta">
-        <span>Account</span><b id="accountId">--</b>
-        <span>Billing</span><b id="freshness">Checking</b>
-        <span>Checked</span><b id="updated">--</b>
-      </div>
-    </section>
-    <section class="controls">
-      <div><p class="tag">USAGE WINDOW</p><h2>Consumption</h2></div>
-      <div class="control-row">
-        <div class="dimension-switch" role="group" aria-label="Display dimension">
-          <button type="button" class="dimension-option active" data-dimension="tokens" aria-pressed="true">Tokens</button>
-          <button type="button" class="dimension-option" data-dimension="cost" aria-pressed="false">Cost</button>
-        </div>
-        <select id="range" aria-label="Usage range">
-          <option value="1">Last 24 hours</option>
-          <option value="7" selected>Last 7 days</option>
-          <option value="30">Last 30 days</option>
-          <option value="custom">Custom</option>
-        </select>
-        <select id="bucket" aria-label="Usage bucket">
-          <option value="hour">Hourly</option>
-          <option value="day" selected>Daily</option>
-          <option value="week">Weekly</option>
-        </select>
-        <select id="timezone" aria-label="Timezone"><option value="UTC">UTC</option></select>
-        <button id="refresh" class="quiet">Refresh</button>
-      </div>
-    </section>
-    <section id="customRange" class="custom-range hidden">
-      <label>Start<input id="startTime" type="datetime-local"></label>
-      <label>End<input id="endTime" type="datetime-local"></label>
-    </section>
-    <section class="usage-summary">
-      <div class="metric-heading"><div id="metricLabel" class="tag">TOKEN USAGE</div><span id="metricUnit">tokens</span></div>
-      <div id="usage" class="usage"><div class="loading">Loading usage...</div></div>
-    </section>
-    <section class="requests"><div class="tag">RECENT REQUESTS</div><div id="requests" class="request-list"><div class="loading">Loading requests...</div></div></section>
-    <p id="meterError" class="error"></p>
-  </main>
-  <script src="/user.js"></script>
-</body>
-</html>
+<main id="login" class="login"><div class="login-panel"><h1>查看用量</h1><p class="muted">使用网关访问密钥登录。</p><form id="loginForm"><label>访问密钥<input id="accessKey" type="password" autocomplete="off" required></label><button>打开用量</button><p id="loginError" class="error"></p></form></div></main>
+<main id="meter" class="meter hidden"><header><div><p class="tag">访问密钥用量</p><h1 id="accountName">账户</h1></div><button id="logout" class="quiet">退出登录</button></header><div id="bridgeNotice" class="bridge-notice hidden" aria-live="polite"><strong id="bridgeNoticeTitle">用量账户已就绪</strong><span id="bridgeNoticeText">正在打开用量视图。</span></div>
+<section class="balance"><div><p class="tag">可用余额</p><strong id="balance">--</strong><span id="currency"></span></div><div class="balance-meta"><span>账户</span><b id="accountId">--</b><span>账单</span><b id="freshness">检查中</b><span>检查时间</span><b id="updated">--</b></div></section>
+<section class="controls"><div><p class="tag">用量时间范围</p><h2>消耗情况</h2></div><div class="control-row"><div class="dimension-switch" role="group" aria-label="显示维度"><button type="button" class="dimension-option active" data-dimension="tokens" aria-pressed="true">令牌</button><button type="button" class="dimension-option" data-dimension="cost" aria-pressed="false">费用</button></div><select id="range" aria-label="用量范围"><option value="1">最近 24 小时</option><option value="7" selected>最近 7 天</option><option value="30">最近 30 天</option><option value="custom">自定义</option></select><select id="bucket" aria-label="用量粒度"><option value="hour">按小时</option><option value="day" selected>按天</option><option value="week">按周</option></select><select id="timezone" aria-label="时区"><option value="UTC">UTC</option></select><button id="refresh" class="quiet">刷新</button></div></section>
+<section id="customRange" class="custom-range hidden"><label>开始<input id="startTime" type="datetime-local"></label><label>结束<input id="endTime" type="datetime-local"></label></section><section class="usage-summary"><div class="metric-heading"><div id="metricLabel" class="tag">令牌用量</div><span id="metricUnit">令牌</span></div><div id="usage" class="usage"><div class="loading">正在加载用量...</div></div></section><section class="requests"><div class="tag">最近请求</div><div id="requests" class="request-list"><div class="loading">正在加载请求...</div></div></section><p id="meterError" class="error"></p></main>
+<script src="/user.js"></script></body></html>
