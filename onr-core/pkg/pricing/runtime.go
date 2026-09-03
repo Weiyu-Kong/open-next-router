@@ -213,12 +213,17 @@ func (r *Resolver) Compute(provider, key, model string, usage map[string]any) (*
 		channel = provider + "/" + key
 	}
 
+	unit := strings.ToLower(strings.TrimSpace(r.unit))
+	currency := "usd"
+	if strings.HasPrefix(unit, "cny_") {
+		currency = "cny"
+	}
 	return &CostResult{
 		Provider: provider,
 		Key:      key,
 		Channel:  channel,
 		Model:    model,
-		Unit:     "usd",
+		Unit:     currency,
 		RateUnit: r.unit,
 
 		Multiplier: multiplier,

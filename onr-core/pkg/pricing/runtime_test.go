@@ -77,6 +77,43 @@ channels:
 	}
 }
 
+func TestResolverComputeCNYRateUnit(t *testing.T) {
+	dir := t.TempDir()
+	pricePath := filepath.Join(dir, "price.yaml")
+	priceYAML := `
+version: v1
+unit: cny_per_1m_tokens
+entries:
+  - provider: ctyun
+    model: qwen3.8-max
+    cost:
+      input: 12
+      cache_read: 1.5
+      output: 36
+`
+	if err := os.WriteFile(pricePath, []byte(priceYAML), 0o600); err != nil {
+		t.Fatalf("write price: %v", err)
+	}
+	r, err := LoadResolver(pricePath, "")
+	if err != nil || r == nil {
+		t.Fatalf("LoadResolver: resolver=%v err=%v", r, err)
+	}
+	c, ok := r.Compute("ctyun", "primary", "qwen3.8-max", map[string]any{
+		"input_tokens":      1000000,
+		"cache_read_tokens": 200000,
+		"output_tokens":     500000,
+	})
+	if !ok || c == nil {
+		t.Fatalf("Compute failed")
+	}
+	if c.Unit != "cny" || c.RateUnit != "cny_per_1m_tokens" {
+		t.Fatalf("units=%q/%q want cny/cny_per_1m_tokens", c.Unit, c.RateUnit)
+	}
+	if math.Abs(c.TotalCost-27.9) > 1e-9 {
+		t.Fatalf("total cost=%v want=27.9", c.TotalCost)
+	}
+}
+
 func TestLoadResolverMissingPriceFile(t *testing.T) {
 	r, err := LoadResolver(filepath.Join(t.TempDir(), "missing.yaml"), "")
 	if err != nil {

@@ -51,9 +51,13 @@ func (c *Client) computeCost(
 	if resolver == nil {
 		return nil
 	}
-	model := strings.TrimSpace(meta.DSLModelMapped)
+	// Price catalogs and customer meter views use the public model name. The
+	// DSL-mapped name may be a provider-owned UUID and is only a transport
+	// detail. Keep the mapped name as a compatibility fallback for catalogs
+	// that intentionally price provider-native model identifiers.
+	model := strings.TrimSpace(meta.OriginModelName)
 	if model == "" {
-		model = strings.TrimSpace(meta.OriginModelName)
+		model = strings.TrimSpace(meta.DSLModelMapped)
 	}
 	out, ok := resolver.Compute(provider, keyName, model, usage)
 	if !ok || out == nil {

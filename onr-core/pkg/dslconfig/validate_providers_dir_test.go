@@ -30,6 +30,28 @@ func TestValidateProvidersDir_ConfigProviders(t *testing.T) {
 	t.Fatalf("validate providers dir failed for all candidates: %v", candidates)
 }
 
+func TestValidateCtyunProviderSanitizesResponseModel(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "config", "providers", "ctyun.conf")
+	pf, err := ValidateProviderFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, match := range pf.Response.Matches {
+		if match.API != "chat.completions" {
+			continue
+		}
+		found := false
+		for _, op := range match.Response.JSONOps {
+			if op.Op == "json_replace" && op.Path == "$.model" && op.ValueExpr == "$request.model" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("ctyun %s response must replace upstream model with public request model", match.API)
+		}
+	}
+}
+
 func containsLoadedProvider(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {
