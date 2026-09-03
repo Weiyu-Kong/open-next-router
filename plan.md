@@ -2,458 +2,270 @@
 
 ## 1. Product Goal
 
-Build ONR into a multi-provider API relay and meter portal. A customer receives
-one Access Key and uses it both as the API credential and as the portal login
-credential. The customer does not need, and the MVP must not introduce, a
-separate local user entity.
+Build open-next-router (ONR) into a multi-provider API relay and self-hosted
+meter portal. One Access Key is both the API credential and the portal login
+credential. The MVP does not introduce a separate user entity.
 
-The complete customer journey is:
+The customer journey is:
 
 ```text
 Administrator creates an Access Key and grants initial credit
-    -> customer logs in to the meter portal with that Access Key
-    -> customer calls the ONR base URL with OpenAI-compatible requests
-    -> ONR selects an allowed upstream provider and hides its credentials
-    -> request usage and cost are charged to the Access Key account
+    -> customer logs in with that Access Key
+    -> customer calls the ONR base URL with an OpenAI-compatible request
+    -> ONR selects an explicitly configured provider and hides its credentials
+    -> ONR records actual response usage and cost in the local Redis ledger
     -> customer views balance, requests, and model usage by time range
 ```
 
-The MVP is complete only when all of the following capabilities work together:
+## 2. Product Decisions
 
-1. ONR can relay supported API requests to multiple providers without exposing
-   provider credentials, internal key names, or private upstream URLs.
-2. Every billable request is attributed to the authenticated Access Key and is
-   recorded idempotently in Meterry.
-3. Providers that expose delayed usage APIs can be polled for a bounded time
-   range and internal upstream key, then reconciled without double charging.
-4. Administrators can create, rotate, revoke, credit, debit, and inspect Access
-   Keys.
-5. A customer can log in with only an Access Key and view only that key's
-   balance, request history, and model usage for hourly, daily, and weekly
-   periods.
+### 2.1 Access Key Identity
 
-The word "credit" in this plan means the configured Meterry wallet allowance.
-Usage is still reported in both provider-native dimensions (for example input,
-output, cache, and reasoning tokens) and the configured charged currency. The
-MVP does not maintain a second token quota ledger inside ONR.
+- One active Access Key represents one account in the MVP.
+- No username, password, email, organization, or separate local user entity.
+- Plaintext Access Key is accepted only at API authentication and portal login;
+  it is returned once at creation or rotation and is never stored.
+- `account_id` is the stable billing identity. Key rotation keeps the same
+  account, balance, usage history, and model totals.
+- Revocation is a soft delete: gateway and portal authentication stop, while
+  the non-secret key ID, account mapping, ledger, and audit data remain.
+- Provider credentials and internal provider-key names are server-side only.
+  User responses expose only the Access Key's model-level totals.
 
-## 2. Fixed Product Decisions
+### 2.2 Local Billing Ledger
 
-### 2.1 Access Key Is the Account Credential
+- Redis is the authoritative ledger for this ONR deployment. It stores account
+  credit, adjustments, immutable usage events, idempotency markers, Access Key
+  records, sessions, and billing queue state.
+- Each new account receives `billing.initial_credit` exactly once. Repeated
+  provisioning and retries cannot grant it twice.
+- Monetary values are stored as integer micro-units with six decimal places.
+  The configured `billing.currency` is returned in all balance and usage APIs.
+- Usage is attributed to the authenticated Access Key/account and grouped for
+  customers by the public requested model. Provider and internal-key changes
+  do not split the customer's model history.
+- Accounting happens after the provider response using actual parsed usage.
+  ONR does not reserve an estimated amount or enforce a strict zero-balance
+  stop. Low balances and concurrent requests may produce a small overspend.
+- A request ID is the usage-event idempotency identity. Replaying the same event
+  cannot charge the account twice.
 
-- One active Access Key represents one customer/account in the MVP.
-- No separate `User` entity or username/password login is required.
-- The plaintext Access Key may be accepted only at API authentication and portal
-  login boundaries. It must not be stored or returned after creation.
-- `account_id` is the stable billing identity and maps to one Meterry account.
-- `subject_type` and `subject_id` are the stable Meterry usage subject. Balance
-  checks, direct usage events, reconciliation events, and user queries must use
-  the same mapping.
-- A second active Access Key for the same account is rejected. Key rotation must
-  preserve the account, wallet, usage history, and balance.
-- Administrative deletion is a soft-delete/revocation operation. It immediately
-  blocks gateway and portal authentication but retains the non-secret key ID,
-  account mapping, billing history, and audit trail. Physical ledger deletion is
-  outside the Access Key lifecycle.
+### 2.3 DSL-Driven Runtime
 
-### 2.2 Initial Credit and Balance Behavior
-
-- Every newly provisioned Access Key account receives a configurable initial
-  credit and currency exactly once. Rotating its credential does not grant a
-  second initial credit.
-- Meterry is authoritative for accounts, wallets, credits, debits, usage,
-  limits, and bills.
-- Initial credit uses a deterministic idempotency key so retries cannot grant it
-  twice.
-- Redis stores access control, sessions, non-secret mappings, caches, and the
-  billing outbox. Redis is not an authoritative wallet or ledger.
-- The pre-request balance check is best effort. ONR does not reserve estimated
-  cost before a request and does not provide a strict hard stop at zero.
-- A small temporary overspend is explicitly allowed when the remaining balance
-  is low or concurrent requests are in flight.
-
-### 2.3 DSL-Driven Gateway Behavior
-
-- Runtime protocol conversion and provider behavior must be selected by atomic
-  directives in `config/providers/*.conf`.
-- `onr/internal/proxy` remains an execution engine and must not infer behavior
+- Runtime behavior is explicitly selected by directives in
+  `config/providers/*.conf`.
+- `onr/internal/proxy` remains an execution engine; it must not guess behavior
   from provider names, paths, API names, or model names.
-- Provider/model access is restricted by the authenticated Access Key policy and
-  explicit model routes. A client-supplied provider cannot bypass that policy.
-- Any new DSL directive requires parser support, validation, documentation in
-  `DSL_SYNTAX.md`, semantic tests, and provider-directory validation.
+- Compatibility transformations must be opt-in atomic DSL directives. Every
+  directive requires parser support, validation, `DSL_SYNTAX.md` documentation,
+  semantic tests, and provider-directory validation.
 
-### 2.4 Information Isolation
+### 2.4 Provider Accounting Modes
 
-- The browser and gateway client must never receive upstream API keys, internal
-  key names, Meterry credentials, Redis credentials, or private upstream URLs.
-- User APIs derive account and subject scope from the authenticated server-side
-  Access Key session. Caller-supplied account, subject, or Access Key scope is
-  never trusted.
-- Provider dimensions are available to administrators. User responses suppress
-  provider and internal-key dimensions unless a later product decision exposes
-  a deliberately sanitized provider label.
-- Upstream errors must be normalized so credentials, private URLs, internal
-  headers, and stack traces cannot leak.
+- `direct`: usage in the proxied response is the billing source. Provider usage
+  monitoring must not create a second charge.
+- `authoritative`: usage is charged only after a provider usage API returns the
+  authoritative record. This mode is not enabled for the current Ctyun path.
+- `correction`: a later provider record may apply an explicit idempotent delta;
+  this remains out of scope until delta semantics are implemented.
 
-### 2.5 Provider Usage Source Modes
-
-Each provider integration must explicitly select one accounting source mode in
-server-side configuration. The proxy must not infer a mode from the provider
-name, request path, API operation, or model.
-
-- `direct`: usage returned by the proxied response is the billing source. No
-  provider usage poll may create a second charge for that request.
-- `authoritative`: ONR stores a reconciliation candidate and delays final
-  charging until the provider usage API returns the authoritative record.
-- `correction`: direct usage is charged first and a later provider record may
-  apply only an explicit idempotent delta. This mode is not required for the
-  MVP and must not be enabled until delta semantics are implemented and tested.
-
-Provider usage APIs may expose either of these explicit query shapes:
-
-1. Per-request detail, correlated by an upstream request/generation ID. The
-   OpenRouter generation-detail adapter is the first concrete implementation.
-2. Time-range listing, scoped by a server-owned internal upstream key identity,
-   with pagination/cursor support when the provider offers it.
-
-Credentials for both shapes remain server-side. Persisted candidates and user
-payloads contain only opaque internal key identifiers, never plaintext provider
-keys.
-
-## 3. Target Request and Accounting Flow
+## 3. Current Architecture
 
 ```text
-Authenticate Access Key
-    -> load account, subject, allowlists, and route policy
-    -> perform best-effort balance check
-    -> resolve an explicitly configured model route and allowed provider
-    -> relay request using a server-owned upstream credential
-    -> parse response usage according to provider DSL
-    -> calculate cost from configured pricing
-    -> enqueue an idempotent billing event with request_id + access_key_id
-    -> Meterry updates the authoritative account ledger
+Access Key authentication
+    -> explicit Access Key route/provider policy
+    -> provider relay and DSL response usage extraction
+    -> local pricing calculation
+    -> pkg/billing.Ledger.Record
+    -> Redis atomic event + account-total update
+    -> user/admin scoped query APIs and portal views
 ```
 
-For delayed provider usage:
+For Ctyun, each Access Key can currently bind to one server-owned Ctyun
+credential through `provider_key_bindings`. There is no automatic provider or
+credential switching. Ctyun Chat Completions use direct-response billing; the
+Ctyun monitor API is available for aggregate reporting work but does not create
+billing events.
 
-```text
-Persist reconciliation candidate with ONR and upstream request IDs
-    -> scheduled bounded provider query or per-request detail query
-    -> identify the opaque server-owned upstream key mapping
-    -> normalize provider records to the common usage contract
-    -> correlate by provider + upstream request ID + ONR request ID
-    -> enqueue with the original ONR billing idempotency identity
-    -> Meterry applies exactly one authoritative charge
-```
+## 4. Acceptance Criteria
 
-Required dimensions for an internal usage record:
+### Relay
 
-- `request_id` and billing idempotency key
-- `account_id`, `access_key_id`, `subject_type`, and `subject_id`
-- requested and resolved model
-- provider and server-owned upstream key identity
-- API operation and request status
-- input, output, cache, and provider-specific token metrics when available
-- actual provider cost and customer charged amount
-- event source (`direct` or `provider_reconciliation`)
-- occurrence, ingestion, and reconciliation timestamps
+- OpenAI-compatible Chat Completions work through the ONR base URL.
+- Explicitly configured streaming and non-streaming usage is captured.
+- Access Key provider/model/route restrictions are enforced.
+- Revoked, disabled, and expired keys cannot call the gateway or use existing
+  portal sessions.
+- Responses and errors do not leak provider URLs, credentials, or internal key
+  names.
 
-The upstream key identity is internal-only and must not appear in user APIs.
+### Billing
 
-## 4. Functional Acceptance Criteria
+- A successful billable request creates one local ledger event for the correct
+  Access Key and model.
+- Initial credit, credit/debit adjustments, and request events are idempotent.
+- Balance, token metrics, charged amount, request history, and freshness are
+  queryable by the owning Access Key.
+- User reports support model, hour, day, week, custom range, and IANA timezone.
+- Administrator reports support cross-account inspection and adjustments.
+- Redis restart preserves account totals and usage history.
 
-### 4.1 Relay
+### Provider Usage
 
-- OpenAI-compatible chat completions and responses requests work through the ONR
-  base URL for explicitly configured providers.
-- Streaming and non-streaming usage are captured according to DSL semantics.
-- Access Key provider/model/route restrictions are enforced before forwarding.
-- Revoked, disabled, or expired keys cannot call the gateway.
-- User-visible responses and errors contain no upstream secrets or private
-  routing information.
+- Ctyun credentials use the correct server-side authentication modes: Bearer
+  APP_KEY for inference and EOP AK/SK signing for monitor APIs.
+- Ctyun public model pricing is loaded from `config/price.ctyun.yaml` and
+  charged in the configured currency.
+- Delayed provider usage adapters remain explicitly scoped and cannot duplicate
+  a direct-response charge.
 
-### 4.2 Accounting and Reconciliation
+### Deployment
 
-- A successful billable request creates one Meterry charge for the correct
-  Access Key account.
-- Retries of the same billing event do not create duplicate charges.
-- Failed asynchronous events remain pending until acknowledged or dead-lettered.
-- The portal exposes an Access Key-scoped freshness timestamp and pending event
-  count, never the global queue state.
-- At least one concrete provider usage API adapter is configured and verified.
-- Provider adapters support their declared query shape only; unsupported
-  pagination, streaming correlation, or time-list behavior fails validation or
-  remains visibly pending rather than silently falling back.
-- Direct response usage and delayed provider usage reconciliation cannot charge
-  the same usage twice.
-
-### 4.3 Administration
-
-- Create an Access Key with initial credit, currency, model/provider allowlists,
-  and route policy.
-- Retry partially completed provisioning without duplicating the account,
-  wallet, or initial credit.
-- List, inspect, rotate, disable, and revoke an Access Key.
-- Soft-delete an Access Key through revocation while retaining its billing and
-  audit records.
-- Credit or debit its Meterry wallet with an administrator-supplied idempotency
-  key.
-- View cross-account balance, requests, charges, model usage, provider usage,
-  failed requests, and provisioning health.
-
-### 4.4 Customer Portal
-
-- Log in and log out using only the Access Key.
-- Show account identity, balance, currency, initial credit/limit state, and data
-  freshness.
-- Show request history without provider URL, provider credential, or internal
-  key fields.
-- Show request count, input/output/cache tokens, and charged amount grouped by
-  model.
-- Support 24-hour, 7-day, and 30-day windows with hour/day/week buckets.
-- Support a bounded custom time range and explicit timezone.
-- Revoking the Access Key invalidates both API access and existing portal
-  sessions.
+- Multiple ONR instances may share an HA Redis deployment and the same provider
+  configuration. Redis is the shared source of truth for keys, sessions, ledger,
+  and queue state.
+- Provider DSL, pricing, and secrets must be identical or centrally managed on
+  every instance; provider secrets must not be put in Redis.
+- The remaining process-failure window between a provider response and the
+  Redis ledger write must be monitored and covered by reconciliation where the
+  provider supports it.
 
 ## 5. Implementation Status
 
 ### Stage 1: Authenticated Billing Principal - Complete
 
-- [x] Propagate `AccessKeyID`, `AccountID`, `SubjectType`, `SubjectID`, and
-  `RoutePolicyID` through authentication and billing metadata.
-- [x] Preserve compatibility for legacy file and Redis key records.
-- [x] Use the authenticated subject for balance checks and billing events.
+- [x] Propagate Access Key ID, account ID, subject, and route policy through
+  authentication and billing metadata.
+- [x] Use the authenticated subject for gateway policy and billing scope.
 
-### Stage 2: Access Policy and Explicit Routing - Complete for MVP
+### Stage 2: Explicit Access Policy and Routing - Complete for MVP
 
-- [x] Persist provider/model allowlists and route policy on Access Keys.
-- [x] Enforce allowlists in OpenAI-style and Gemini handlers.
-- [x] Enforce route policy against explicit model routes.
-- [x] Prevent provider overrides from escaping the configured model route.
-- [ ] Add weighted routing, health-aware fallback, and administrator-managed
-  route policy editing if these are required beyond the current MVP.
+- [x] Persist and enforce provider/model allowlists and route policies.
+- [x] Prevent client provider overrides from escaping configured routes.
+- [ ] Add weighted routing, health-aware fallback, or automatic switching only
+  if a later product decision requires them.
 
-### Stage 3: Access Key Provisioning and Admin Balance Controls - Implemented,
-Production Verification Pending
+### Stage 3: Local Redis Ledger and Access Key Administration - Complete for MVP
 
-- [x] Add configurable initial credit and currency.
-- [x] Deterministically provision or reuse the Meterry account and wallet.
-- [x] Grant initial credit idempotently.
-- [x] Persist non-sensitive Meterry identifiers and provisioning state.
-- [x] Reject a second active key for an account atomically in Redis.
-- [x] Preserve account and wallet identity during key rotation.
-- [x] Add retryable provisioning and administrator credit/debit operations.
-- [x] Add administrator balance/limit snapshots.
-- [x] Add local failure-injection tests for account lookup/creation, subject
-  binding, wallet lookup/creation, initial credit, and lost credit responses.
-- [x] Return the one-time secret with a `202 Accepted` pending result when
-  provisioning fails after the Redis key is created, and expose a retry action.
-- [x] Recheck one-active-key-per-account atomically when a pending key becomes
-  active.
-- [ ] Verify provisioning and retries against a production-compatible Meterry
-  deployment.
+- [x] Add `pkg/billing` account, event, balance, adjustment, and query types.
+- [x] Add Redis atomic initialization, initial credit, event recording, and
+  idempotency primitives.
+- [x] Create/retry Access Keys with exactly-once initial credit.
+- [x] Rotate, disable, revoke, inspect, and route Access Keys.
+- [x] Add administrator credit/debit with a caller-supplied idempotency key.
+- [x] Remove the external Meterry runtime client, webhook, outbox, config, and
+  SDK dependency from the local billing path.
 
-### Stage 4: Access Key Login and User Read APIs - Implemented, Integration
-Verification Pending
+### Stage 4: Access Key Portal and Meter APIs - Complete for MVP
 
-- [x] Add separate Access Key login, logout, profile, and server-side sessions.
-- [x] Add login throttling, generic auth errors, expiry, and revocation
-  revalidation.
-- [x] Add scoped balance, limits, usage, bills, and request-history APIs.
-- [x] Derive every query scope from the authenticated Access Key record.
-- [x] Support hour/day/week buckets and bounded 24-hour, 7-day, and 30-day
-  ranges.
-- [x] Include explicit configured currency metadata consistently in balance,
-  limits, usage, bill, and request-history responses.
-- [ ] Verify the read APIs against a production-compatible Meterry deployment.
+- [x] Add Access Key login, logout, server-side sessions, expiry, throttling,
+  and revocation revalidation.
+- [x] Add scoped balance, limits, usage, bills, request history, and freshness
+  endpoints.
+- [x] Add model-level usage with hour/day/week and bounded custom time ranges.
+- [x] Add explicit currency, token, cost, empty, loading, error, and narrow
+  screen handling in the portal assets.
+- [ ] Complete browser-level verification in a normal environment.
 
-### Stage 5: Customer and Administrator Views - Mostly Complete
+### Stage 5: Ctyun Direct Provider Integration - Complete for MVP
 
-- [x] Add `/user` Access Key login and logout screens.
-- [x] Show balance, model usage, bills, and sanitized request history.
-- [x] Add shared 24-hour, 7-day, and 30-day selectors.
-- [x] Add administrator cross-account meter summaries and Billing-page views.
-- [x] Expose per-key ingestion freshness and pending billing events in the user
-  portal through session-scoped `/api/user/freshness`.
-- [x] Increment pending state when a keyed billing event is enqueued and clear it
-  atomically when the event is acknowledged or moved to dead letter.
-- [x] Add bounded custom start/end timestamps and explicit IANA timezone
-  selection shared by usage, bills, and request history.
-- [ ] Confirm all empty, loading, partial-failure, and narrow-screen states.
+- [x] Add the Ctyun provider DSL and explicit Chat Completions model mapping.
+- [x] Add server-owned Ctyun APP_KEY and EOP monitor credential handling.
+- [x] Add per-Access-Key Ctyun internal-key binding without auto-switching.
+- [x] Add streaming and non-streaming usage extraction and response mappings.
+- [x] Add Ctyun CNY pricing catalog and local cost calculation.
+- [x] Verify direct-response accounting wiring; live acceptance remains a
+  deployment task unless credentials and endpoints are available.
+- [ ] Add monitor aggregate display to admin/user reports if product requires
+  provider-reported reconciliation or comparison data.
 
-### Stage 6: Provider Usage APIs and Reconciliation - Correlation DSL and
-Durable State Complete, Automatic Reconciliation Pending
+### Stage 6: Delayed Usage Reconciliation - Pending
 
-- [x] Define a provider-neutral bounded usage adapter contract.
-- [x] Add a generic server-configured HTTP JSON adapter.
-- [x] Normalize provider records and enqueue provider-scoped idempotent Meterry
-  reconciliation events.
-- [x] Implement and test the OpenRouter generation-detail adapter against a
-  realistic response fixture, including its explicit no-pagination limitation.
-- [x] Add an explicit DSL directive for extracting the provider request ID from
-  response JSON, including parsing, validation, documentation, semantic tests,
-  and provider-directory validation. Initial support is non-streaming only
-  unless SSE correlation is separately specified and tested.
-- [x] Add secure runtime configuration for provider usage mode, endpoint,
-  internal key mapping, cursor/pagination behavior, polling/lease intervals,
-  and environment-sourced credentials.
-- [x] Persist durable reconciliation candidates containing opaque upstream key
-  identity, provider request ID, ONR request ID, account scope, attempts, lease,
-  and retry state, but no provider secret.
-- [ ] Persist polling checkpoints and overlap windows so delayed records are
-  recovered safely.
-- [ ] Add automatic polling with bounded retries, leases, backoff, dead-letter
-  handling, and restart recovery.
-- [ ] Prove authoritative mode suppresses direct charging and reuses the
-  original ONR idempotency identity so provider polling cannot double charge.
-- [ ] Add reconciliation status, lag, failures, and retry visibility for
-  administrators.
+- [x] Define provider-neutral usage adapter and durable candidate state.
+- [x] Add explicit provider request-ID extraction and validation.
+- [ ] Persist polling checkpoints and overlap windows.
+- [ ] Add scheduled polling, leases, backoff, retry, dead-letter, and restart
+  recovery.
+- [ ] Prove authoritative mode suppresses direct billing and preserves the
+  original idempotency identity.
+- [ ] Add administrator visibility for reconciliation lag and failures.
 
-### Stage 6C: Ctyun Provider Integration - In Progress
+### Stage 7: Distributed and Production Readiness - Pending
 
-- [x] Confirm Ctyun inference uses Bearer APP_KEY and monitor APIs use EOP AK/SK.
-- [x] Add server-only Ctyun credential fields and environment overrides to the
-  key store; never commit the reference credentials.
-- [x] Add explicit Access Key `provider_key_bindings` for selecting one Ctyun
-  internal key without automatic provider switching.
-- [x] Add the Ctyun EOP signer and monitor aggregate response normalization in
-  `onr-core/pkg/ctyun`.
-- [x] Add the Ctyun provider DSL with explicit chat model mapping and streaming
-  usage inclusion.
-- [x] Let administrators assign `provider_key_bindings` when creating an
-  Access Key in the Web UI; only opaque internal key names are returned.
-- [x] Align administrator usage and bill summaries with user-facing
-  `Access Key + model` aggregation so provider/key changes do not split history.
-- [ ] Wire Ctyun monitor polling into the user/admin usage APIs. Its API returns
-  time-bucket aggregates, not per-request records, so it must remain reporting
-  data and must not create duplicate billing events.
-- [ ] Run live Ctyun inference and monitor API acceptance with a local key
-  binding, without exposing upstream credentials or URLs.
-
-Implementation note: local unit tests and provider DSL validation pass. Redis
-and HTTP integration suites require socket permissions unavailable in the
-restricted execution sandbox, so live Ctyun/Redis/Meterry acceptance remains
-open.
-
-### Stage 7: End-to-End and Production Readiness - Pending
-
-- [x] Run complete root-module and independent `onr-core` unit/integration test
-  suites with local Redis and HTTP test doubles.
-- [ ] Run a real Redis + Meterry + ONR + provider deployment journey.
-- [ ] Verify chat completions, responses, streaming, and non-streaming billing.
-- [ ] Verify account isolation with at least two Access Keys.
-- [ ] Verify initial-credit retry idempotency and key rotation continuity.
-- [ ] Verify revocation blocks gateway requests and existing portal sessions.
-- [ ] Verify delayed usage reconciliation and no duplicate charge.
-- [ ] Audit gateway errors and all user API payloads for secret/provider leakage.
-- [ ] Document deployment configuration, migration, backup, recovery, and
-  operational rollback procedures.
+- [x] Document the shared Redis and identical-configuration deployment boundary.
+- [ ] Verify two ONR instances with cross-instance key create/revoke and portal
+  session behavior.
+- [ ] Verify pending-event recovery after one billing worker stops.
+- [ ] Verify Redis persistence, restart, backup, restore, and HA failover.
+- [ ] Verify two Access Key account isolation end to end.
+- [ ] Verify revocation blocks both gateway requests and existing sessions.
+- [ ] Audit all gateway errors and user/admin payloads for secret leakage.
+- [ ] Document production migration, rollback, monitoring, and incident
+  recovery procedures.
 
 ## 6. Next Execution Order
 
-Work proceeds in small stages, and this file is updated after each completed
-stage. Each completed stage receives a dedicated Git commit.
-
-1. **Stage 6B - Secure reconciliation state.** Add validated authoritative-mode
-   runtime configuration, environment-only provider credentials, and durable
-   Redis candidate/lease/retry storage.
-2. **Stage 6C - Ctyun provider integration.** Use explicit Ctyun model mappings,
-   bind each Access Key to one server-owned Ctyun key for testing, and add the
-   EOP monitor protocol without automatic fallback or provider replacement.
-3. **Stage 6D - Automatic authoritative billing.** Suppress direct billing for
-   explicitly authoritative providers, poll OpenRouter, charge with the original
-   ONR idempotency identity, and prove retry/restart no-double-charge behavior.
-4. **Stage 6E - Operations.** Add checkpoint/overlap behavior where supported,
-   reconciliation lag/failure/dead-letter metrics, and administrator retry
-   controls. Document OpenRouter's per-request/no-pagination limitation.
-5. **Stage 7A - Real-service acceptance.** Run Redis + Meterry + ONR + provider
-   journeys for chat completions, responses, streaming/non-streaming behavior,
-   two-key isolation, initial credit, rotation, revocation, and reconciliation.
-6. **Stage 7B - Production readiness.** Complete leakage audit, browser state
-   verification, deployment/migration/backup/recovery/rollback documentation,
-   and operational runbooks.
+1. Run focused local-ledger and service tests for account isolation, initial
+   credit idempotency, administrator adjustment idempotency, model/hour/day/week
+   aggregation, and revocation.
+2. Run a normal-host Redis + ONR + admin + user acceptance journey with Ctyun:
+   create key, call Chat Completions, inspect balance and usage, adjust credit,
+   rotate, and revoke.
+3. Add the Ctyun monitor aggregate read path only if the product needs provider
+   comparison or delayed-usage reporting. Keep it separate from direct charges.
+4. Implement delayed reconciliation checkpoints and worker recovery for a
+   provider that exposes a supported usage API.
+5. Verify two-instance deployment and Redis persistence/HA behavior.
+6. Complete deployment and operations documentation.
 
 ## 7. Requirement Traceability
 
-| Product requirement | Implemented foundation | Remaining completion gate |
+| Requirement | Current implementation | Remaining gate |
 | --- | --- | --- |
-| Relay multiple API providers behind one Access Key and ONR URL | Explicit provider DSL, model routes, Access Key policies, server-owned credentials, OpenAI-style and Gemini handlers | Real provider chat completions/responses and streaming/non-streaming acceptance; leakage audit |
-| Meter every request to the Access Key | Authenticated billing principal, Meterry outbox, idempotent events, best-effort balance check | Automatic authoritative provider reconciliation and no-double-charge proof |
-| Query provider usage by request or internal key/time range | Provider-neutral contract, generic HTTP adapter, OpenRouter per-generation adapter | Secure runtime wiring; durable polling; first time-range adapter when a selected provider exposes that API |
-| Grant initial credit and allow small overspend | Idempotent Meterry account/wallet provisioning, configurable initial credit, no reservation | Production-compatible Meterry verification and concurrency journey |
-| Administer Access Keys and balances | Create/list/inspect/rotate/disable/revoke, soft-delete semantics, credit/debit, meter summaries | Real-service lifecycle verification and reconciliation operations view |
-| Access Key portal login and self-service usage views | Server-side sessions, balance/limits, sanitized requests, model usage, bills, freshness, hour/day/week/custom ranges and timezone | Real-service isolation test and empty/loading/error/mobile browser verification |
-
-The first time-range provider adapter is required when the deployment selects a
-provider that exposes such an API. OpenRouter's current generation-detail API
-does not provide time-range listing, so it satisfies only the per-request query
-shape and must not be documented as broader coverage.
+| One Access Key for API and portal | Redis Access Key auth and server-side portal sessions | End-to-end revocation test |
+| Hide providers and internal keys | Server-owned credentials and sanitized user APIs | Final leakage audit |
+| Charge each request to its model | DSL usage extraction, local pricing, Redis idempotent ledger | Normal-host live acceptance |
+| Initial credit and small overspend | Atomic initial credit; post-response accounting | Concurrency and restart acceptance |
+| Admin key and balance control | Web/TUI lifecycle and local credit/debit | Browser and two-key acceptance |
+| User usage and balance views | Scoped APIs and portal model/time aggregation | Browser verification |
+| Distributed operation | Shared Redis-compatible state and queue primitives | Two-instance/HA Redis test |
+| Provider monitor APIs | Ctyun EOP normalization and generic adapter foundations | Checkpoints and reconciliation worker |
 
 ## 8. Verification Record
 
-- 2026-08-27: the root module and independent `onr-core` module passed complete
-  `go test ./...` suites with Go 1.26.6 and `/tmp` Go caches. Coverage included
-  Redis/miniredis, Meterry/httptest, provider DSL validation, proxy behavior,
-  admin Web APIs, usage extraction, and usage adapters.
-- 2026-08-28: the root module passed `go test ./...` after per-Access-Key
-  freshness tracking was added. Focused tests also verified Access Key isolation,
-  successful acknowledgement, dead-letter cleanup, and the user endpoint.
-- 2026-08-28: the root module passed `go test ./...` after shared time-range,
-  IANA timezone, and currency metadata support was added to all user meter
-  queries. The embedded portal assets and JavaScript syntax were also checked.
-- 2026-08-28: provisioning failure injection covered every Meterry boundary and
-  a lost-success response from initial credit. The root module passed
-  `go test ./...`; retries retained the one-time secret, activated the original
-  key, and applied initial credit once.
-- 2026-08-28: a concrete OpenRouter generation-detail usage adapter passed
-  realistic HTTP response, server-owned authentication, request-ID integrity,
-  bounded-window, and normalization tests. The root module passed `go test ./...`.
-- 2026-08-28: Stage 6A added the explicit
-  `upstream_request_id_json "$.id";` provider directive and configured it for
-  OpenRouter. Parser/validation tests cover malformed and duplicate rules;
-  runtime tests cover response-header priority, missing/invalid/non-string
-  values, and extraction before downstream JSON deletion. The independent
-  `onr-core` and root modules both passed complete `go test ./...` suites.
-- 2026-08-28: Stage 6B added validated provider-usage runtime configuration,
-  environment-only OpenRouter credentials, and Redis reconciliation candidates.
-  Tests cover dependency validation, YAML credential rejection, stable
-  candidate identity, duplicate enqueue, random lease tokens, owner-only
-  acknowledgement/retry, sanitized error codes, and expired-lease recovery.
-  Focused `go test ./pkg/config ./pkg/controlplane` and the complete root
-  `go test ./...` suite passed.
-- 2026-08-28: Stage 6C added the Ctyun provider DSL, explicit public-model to
-  Ctyun model-ID mappings, server-only APP_KEY/EOP credential fields,
-  Access Key to internal-key bindings, EOP signing, and aggregate monitor
-  response normalization. Focused core tests, provider DSL validation, and the
-  complete root `go test ./...` suite passed. Ctyun live API acceptance and
-  monitor report wiring remain pending.
-- 2026-08-28: The administrator Web API and UI now accept and display explicit
-  Access Key provider-key bindings. Admin/service and integration tests passed.
-- 2026-08-28: Administrator meter summaries were changed to group by `model`
-  only, matching the user portal and preserving model totals across manual
-  provider or internal-key changes. Tests assert the outgoing Meterry queries.
-- A live Meterry/Redis/provider deployment has not yet been verified. Local test
-  doubles do not establish external service compatibility or complete Stage 7.
+- 2026-09-03: Added the Redis-backed local ledger, exactly-once initial credit,
+  idempotent usage events and adjustments, local admin/user queries, Ctyun
+  pricing integration, and post-response accounting semantics. Focused
+  `go test ./pkg/billing ./pkg/controlplane`, `go build ./...`, and
+  `git diff --check` passed. Full socket-based tests require a normal host
+  because the restricted sandbox blocks local listener creation.
+- 2026-09-03: Removed an unused `fmt` import left by the external billing test
+  cleanup. The full suite compiles; its HTTP/miniredis tests cannot bind local
+  sockets in the restricted sandbox and must be rerun on a normal host.
+- 2026-09-03: On a normal host with local socket access, the complete
+  `GOCACHE=/tmp/onr-go-build-cache GOMODCACHE=/tmp/onr-go-mod-cache go test ./...`
+  suite passed across ONR, admin, billing, Redis, configuration, and usage
+  adapter packages.
+- 2026-09-03: Removed the old external Meterry runtime path and documentation.
+  `billing.edgefn.dev` is not a dependency of the local billing design.
+- Pending: normal-host `go test ./...`, live Ctyun request, two-key isolation,
+  revocation, Redis restart/backup, and distributed failover verification.
 
-## 9. Plan Maintenance Rules
+## 9. Maintenance Rules
 
-- Update checkboxes and the stage heading in this file in the same commit as
-  each completed implementation stage.
-- Add the verification command and outcome to the verification record.
-- Use one dedicated Git commit per completed stage; do not include unrelated
-  worktree files.
-- A stage is complete only when implementation, tests, required DSL/docs, and
-  failure behavior are all present. Local test doubles must be labeled as such
-  and do not close real-service acceptance items.
+- Update this file in the same change as each implementation stage.
+- Mark a checkbox complete only when implementation, tests, and required docs
+  exist. Label local test doubles separately from live-service acceptance.
+- Keep source code, CLI output, and English documentation in English. Use a
+  `_CN.md` suffix for Chinese documentation.
+- Provider DSL changes must include parser, validation, docs, semantic tests,
+  and provider-directory validation.
 
-## 10. Explicitly Out of Scope for the MVP
+## 10. Explicitly Out of Scope for MVP
 
-- A separate local user identity, email, password, organization, or membership
-  system.
-- Multiple simultaneously active customer keys sharing one account.
+- Separate user identity, password login, organization, or membership system.
+- Multiple simultaneously active customer keys for one account.
 - Atomic cost reservation or strict zero-balance enforcement.
-- A second authoritative wallet or ledger inside ONR.
-- Implicit provider compatibility rules in proxy code.
-- User selection or disclosure of private provider credentials and internal key
-  identities.
+- Automatic provider/key switching or weighted fallback.
+- External Meterry website, SDK, API key, or billing dependency.
+- User access to provider credentials or internal provider-key identities.
