@@ -1,9 +1,83 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>用量计量</title><link rel="stylesheet" href="/user.css"></head>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>用量计量</title>
+  <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@6.3.1/dist/css/tabulator.min.css">
+  <link rel="stylesheet" href="/user.css">
+</head>
 <body>
-<main id="login" class="login"><div class="login-panel"><h1>查看用量</h1><p class="muted">使用网关访问密钥登录。</p><form id="loginForm"><label>访问密钥<input id="accessKey" type="password" autocomplete="off" required></label><button>打开用量</button><p id="loginError" class="error"></p></form></div></main>
-<main id="meter" class="meter hidden"><header><div><p class="tag">访问密钥用量</p><h1 id="accountName">账户</h1></div><button id="logout" class="quiet">退出登录</button></header><div id="bridgeNotice" class="bridge-notice hidden" aria-live="polite"><strong id="bridgeNoticeTitle">用量账户已就绪</strong><span id="bridgeNoticeText">正在打开用量视图。</span></div>
-<section class="balance"><div><p class="tag">可用余额</p><strong id="balance">--</strong><span id="currency"></span></div><div class="balance-meta"><span>账户</span><b id="accountId">--</b><span>账单</span><b id="freshness">检查中</b><span>检查时间</span><b id="updated">--</b></div></section>
-<section class="controls"><div><p class="tag">用量时间范围</p><h2>消耗情况</h2></div><div class="control-row"><div class="dimension-switch" role="group" aria-label="显示维度"><button type="button" class="dimension-option active" data-dimension="tokens" aria-pressed="true">令牌</button><button type="button" class="dimension-option" data-dimension="cost" aria-pressed="false">费用</button></div><select id="range" aria-label="用量范围"><option value="1">最近 24 小时</option><option value="7" selected>最近 7 天</option><option value="30">最近 30 天</option><option value="custom">自定义</option></select><select id="bucket" aria-label="用量粒度"><option value="hour">按小时</option><option value="day" selected>按天</option><option value="week">按周</option></select><select id="timezone" aria-label="时区"><option value="UTC">UTC</option></select><button id="refresh" class="quiet">刷新</button></div></section>
-<section id="customRange" class="custom-range hidden"><label>开始<input id="startTime" type="datetime-local"></label><label>结束<input id="endTime" type="datetime-local"></label></section><section class="usage-summary"><div class="metric-heading"><div id="metricLabel" class="tag">令牌用量</div><span id="metricUnit">令牌</span></div><div id="usage" class="usage"><div class="loading">正在加载用量...</div></div></section><section class="requests"><div class="tag">最近请求</div><div id="requests" class="request-list"><div class="loading">正在加载请求...</div></div></section><p id="meterError" class="error"></p></main>
-<script src="/user.js"></script></body></html>
+  <main id="login" class="login">
+    <div class="login-panel">
+      <h1>查看用量</h1>
+      <p class="muted">使用网关访问密钥登录。</p>
+      <form id="loginForm">
+        <label>访问密钥<input id="accessKey" type="password" autocomplete="off" required></label>
+        <button>打开用量</button>
+        <p id="loginError" class="error"></p>
+      </form>
+    </div>
+  </main>
+
+  <main id="meter" class="meter hidden">
+    <aside class="meter-sidebar">
+      <div class="meter-brand">用量中心</div>
+      <div class="account-chip"><span>当前账户</span><strong id="accountName">账户</strong><small id="accountId">--</small></div>
+      <nav class="meter-nav" aria-label="面板导航">
+        <button class="meter-nav-item active" data-panel="overview">总览</button>
+        <button class="meter-nav-item" data-panel="usage-panel">用量详情</button>
+        <button class="meter-nav-item" data-panel="requests-panel">请求明细</button>
+        <button class="meter-nav-item" data-panel="docs-panel">API 文档</button>
+      </nav>
+      <button id="logout" class="quiet meter-logout">退出登录</button>
+    </aside>
+
+    <div class="meter-main">
+      <header class="meter-header">
+        <div><p class="tag">访问密钥用量</p><h1>账户工作台</h1></div>
+        <div class="header-status"><span id="freshness">检查中</span><span id="updated">--</span></div>
+      </header>
+      <div id="bridgeNotice" class="bridge-notice hidden" aria-live="polite"><strong id="bridgeNoticeTitle">用量账户已就绪</strong><span id="bridgeNoticeText">正在打开用量视图。</span></div>
+
+      <section id="overview" class="meter-panel active">
+        <div class="panel-title"><div><p class="tag">总览</p><h2>余额与最近请求</h2></div><button id="overviewRefresh" class="quiet">刷新</button></div>
+        <section class="balance"><div><p class="tag">可用余额</p><strong id="balance">--</strong><span id="currency"></span></div><div class="balance-meta"><span>账单状态</span><b id="overviewFreshness">同步中</b><span>更新时间</span><b id="overviewUpdated">--</b></div></section>
+        <div class="section-caption"><span class="tag">最近请求</span><button class="link-button" data-goto="requests-panel">查看全部</button></div>
+        <div id="overviewRequests" class="request-list compact"><div class="loading">正在加载请求...</div></div>
+      </section>
+
+      <section id="usage-panel" class="meter-panel">
+        <div class="panel-title"><div><p class="tag">用量详情</p><h2>趋势与分布</h2></div><div class="control-row"><div class="dimension-switch" role="group" aria-label="显示维度"><button type="button" class="dimension-option active" data-dimension="tokens" aria-pressed="true">Token</button><button type="button" class="dimension-option" data-dimension="cost" aria-pressed="false">消费</button></div><select id="modelFilter" aria-label="模型筛选"><option value="">全部模型</option></select><select id="range" aria-label="用量范围"><option value="1">最近 24 小时</option><option value="7" selected>最近 7 天</option><option value="30">最近 30 天</option><option value="custom">自定义</option></select><select id="bucket" aria-label="用量粒度"><option value="hour">按小时</option><option value="day" selected>按天</option><option value="week">按周</option></select><select id="timezone" aria-label="时区"><option value="UTC">UTC</option></select><button id="refresh" class="quiet">刷新</button></div></div>
+        <section id="customRange" class="custom-range hidden"><label>开始<input id="startTime" type="datetime-local"></label><label>结束<input id="endTime" type="datetime-local"></label></section>
+        <div class="metric-heading"><div id="metricLabel" class="tag">令牌用量</div><span id="metricUnit">M（百万）</span></div>
+        <div id="usage" class="usage"><div class="loading">正在加载用量...</div></div>
+      </section>
+
+      <section id="requests-panel" class="meter-panel">
+        <div class="panel-title"><div><p class="tag">请求明细</p><h2>全部请求</h2></div><div class="table-tools"><input id="requestSearch" placeholder="搜索模型或请求 ID"><select id="requestUnit" aria-label="Token 单位"><option value="m">M（百万）</option><option value="k">K（千）</option><option value="raw">原始数量</option></select></div></div>
+        <div id="requests" class="request-list"><div class="loading">正在加载请求...</div></div>
+      </section>
+
+      <section id="docs-panel" class="meter-panel">
+        <div class="panel-title"><div><p class="tag">API 文档</p><h2>调用本站 API：快速讲义</h2></div></div>
+        <div class="docs-grid">
+          <article class="doc-card"><span class="doc-step">01</span><h3>准备访问密钥</h3><p>在请求头中使用管理员分配的访问密钥，并只保存在服务端环境变量中。</p><code>Authorization: Bearer &lt;访问密钥&gt;</code></article>
+          <article class="doc-card"><span class="doc-step">02</span><h3>发送聊天请求</h3><p>本站兼容 OpenAI Chat Completions 协议，模型名按部署配置填写。</p><pre>curl https://your-onr.example.com/v1/chat/completions \
+  -H "Authorization: Bearer &lt;访问密钥&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"qwen3.8-max","messages":[{"role":"user","content":"你好"}]}'</pre></article>
+          <article class="doc-card"><span class="doc-step">03</span><h3>读取响应与用量</h3><p>非流式响应会在 <code>usage</code> 字段返回输入、输出、缓存和总 Token。</p><pre>{"usage":{"prompt_tokens":67,"completion_tokens":91,"total_tokens":158}}</pre></article>
+          <article class="doc-card"><span class="doc-step">04</span><h3>使用流式响应</h3><p>设置 <code>stream: true</code> 后读取 SSE 的 <code>data:</code> 行，收到 <code>[DONE]</code> 后结束。</p><pre>{"model":"qwen3.8-max","stream":true,"messages":[...]}</pre></article>
+          <article class="doc-card"><span class="doc-step">05</span><h3>错误处理</h3><p>401 表示密钥无效，429 表示限流或余额不足，5xx 表示上游或网关暂时不可用。建议指数退避重试。</p></article>
+          <article class="doc-card"><span class="doc-step">06</span><h3>安全实践</h3><p>不要在浏览器、日志或客户端代码中暴露密钥；为不同应用分配独立密钥并定期轮换。</p></article>
+        </div>
+      </section>
+      <p id="meterError" class="error"></p>
+    </div>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+  <script src="/user.js"></script>
+</body>
+</html>
