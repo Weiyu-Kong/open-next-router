@@ -241,8 +241,9 @@ function renderUsage(rows) {
     const dimensions = row.dimensions || {};
     const measures = row.measures || {};
     const measure = displayDimension === "cost" ? measures.amount : measures.quantity;
-    const suffix = displayDimension === "cost" ? ` ${billingCurrency}` : " M";
-    return `<article class="usage-card"><h3>${escapeText(dimensions.model || "全部模型")}</h3><strong>${escapeText(formatMeasure(measure, displayDimension))}${escapeText(suffix)}</strong><small>${escapeText(formatBucket(dimensions.bucket))}</small></article>`;
+    const displayValue = displayDimension === "cost" ? formatMeasure(measure, "cost") : formatToken(measure);
+    const displaySuffix = displayDimension === "cost" ? ` ${billingCurrency}` : "";
+    return `<article class="usage-card"><h3>${escapeText(dimensions.model || "全部模型")}</h3><strong>${escapeText(displayValue)}${escapeText(displaySuffix)}</strong><small>${escapeText(formatBucket(dimensions.bucket))}</small></article>`;
   }).join("") + "</div>";
   if (window.Chart) {
     usageChart?.destroy();
@@ -266,7 +267,7 @@ function renderRequests(rows) {
   });
   if (window.Tabulator) {
     requestTable?.destroy();
-    requestTable = new Tabulator("#requests", {data: tableRows, layout: "fitColumns", pagination: true, paginationSize: 10, movableColumns: true, initialSort: [{column: "occurred_at", dir: "desc"}], columns: [{title: "时间", field: "time", sorter: "string"}, {title: "模型", field: "model", headerFilter: "input", formatter: "html", formatterParams: {html: true}}, {title: "请求 ID", field: "request_id"}, {title: "输入", field: "input", formatter: cell => formatToken(cell.getValue())}, {title: "输出", field: "output", formatter: cell => formatToken(cell.getValue())}, {title: "推理", field: "reasoning", formatter: cell => formatToken(cell.getValue())}, {title: "缓存", field: "cached", formatter: cell => formatToken(cell.getValue())}, {title: "总用量", field: "detail", hozAlign: "right"}]});
+    requestTable = new Tabulator("#requests", {data: tableRows, layout: "fitColumns", pagination: true, paginationSize: 10, movableColumns: true, initialSort: [{column: "occurred_at", dir: "desc"}], columns: [{title: "时间", field: "time", sorter: "string"}, {title: "模型", field: "model"}, {title: "请求 ID", field: "request_id"}, {title: "输入", field: "input", formatter: cell => formatToken(cell.getValue())}, {title: "输出", field: "output", formatter: cell => formatToken(cell.getValue())}, {title: "推理", field: "reasoning", formatter: cell => formatToken(cell.getValue())}, {title: "缓存", field: "cached", formatter: cell => formatToken(cell.getValue())}, {title: "总用量", field: "detail", hozAlign: "right"}]});
   }
 }
 
@@ -297,7 +298,9 @@ document.getElementById("refresh").onclick = refresh;
 document.getElementById("bucket").onchange = refresh;
 document.getElementById("modelFilter").onchange = renderDimension;
 document.getElementById("requestSearch").oninput = renderRequests;
-document.getElementById("requestUnit").onchange = event => { requestUnit = event.target.value; renderRequests(requestRows); renderOverviewRequests(requestRows); };
+function changeUnit(value) { requestUnit = value; document.getElementById("requestUnit").value = value; document.getElementById("usageUnit").value = value; renderRequests(requestRows); renderOverviewRequests(requestRows); renderUsage(usageRows); }
+document.getElementById("requestUnit").onchange = event => changeUnit(event.target.value);
+document.getElementById("usageUnit").onchange = event => changeUnit(event.target.value);
 document.getElementById("overviewRefresh").onclick = refresh;
 document.querySelectorAll(".meter-nav-item,[data-goto]").forEach(button => button.onclick = () => { const panel = button.dataset.panel || button.dataset.goto; document.querySelectorAll(".meter-panel").forEach(item => item.classList.toggle("active", item.id === (panel === "overview" ? "overview" : panel))); document.querySelectorAll(".meter-nav-item").forEach(item => item.classList.toggle("active", item.dataset.panel === panel)); });
 document.querySelectorAll(".dimension-option").forEach(button => {

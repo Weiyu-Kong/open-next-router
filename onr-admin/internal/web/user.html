@@ -50,7 +50,7 @@
       <section id="usage-panel" class="meter-panel">
         <div class="panel-title"><div><p class="tag">用量详情</p><h2>趋势与分布</h2></div><div class="control-row"><div class="dimension-switch" role="group" aria-label="显示维度"><button type="button" class="dimension-option active" data-dimension="tokens" aria-pressed="true">Token</button><button type="button" class="dimension-option" data-dimension="cost" aria-pressed="false">消费</button></div><select id="modelFilter" aria-label="模型筛选"><option value="">全部模型</option></select><select id="range" aria-label="用量范围"><option value="1">最近 24 小时</option><option value="7" selected>最近 7 天</option><option value="30">最近 30 天</option><option value="custom">自定义</option></select><select id="bucket" aria-label="用量粒度"><option value="hour">按小时</option><option value="day" selected>按天</option><option value="week">按周</option></select><select id="timezone" aria-label="时区"><option value="UTC">UTC</option></select><button id="refresh" class="quiet">刷新</button></div></div>
         <section id="customRange" class="custom-range hidden"><label>开始<input id="startTime" type="datetime-local"></label><label>结束<input id="endTime" type="datetime-local"></label></section>
-        <div class="metric-heading"><div id="metricLabel" class="tag">令牌用量</div><span id="metricUnit">M（百万）</span></div>
+        <div class="metric-heading"><div id="metricLabel" class="tag">令牌用量</div><label class="inline-unit">Token 单位<select id="usageUnit" aria-label="图表 Token 单位"><option value="m">M（百万）</option><option value="k">K（千）</option><option value="raw">原始数量</option></select></label><span id="metricUnit">M（百万）</span></div>
         <div id="usage" class="usage"><div class="loading">正在加载用量...</div></div>
       </section>
 
