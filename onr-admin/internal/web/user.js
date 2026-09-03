@@ -275,7 +275,7 @@ function renderOverviewRequests(rows) {
   const target = document.getElementById("overviewRequests");
   if (!target) return;
   const recent = rows.slice(-5).reverse();
-  target.innerHTML = recent.length ? recent.map(row => { const value = displayDimension === "cost" ? requestMeasure(row.metrics, "cost") : requestTokenMeasure(row.metrics); return `<div class="request-row"><small>${escapeText(formatTimestamp(row.occurred_at))}</small><span>${escapeText(row.model || "模型未知")}</span><strong>${escapeText(displayDimension === "cost" ? formatMeasure(value, "cost") + " " + billingCurrency : formatToken(value))}</strong></div>`; }).join("") : '<div class="loading">暂无请求记录。</div>';
+  target.innerHTML = recent.length ? recent.map(row => { const tokens = requestTokenMeasure(row.metrics); const cost = requestMeasure(row.metrics, "cost"); return `<div class="request-row"><small>${escapeText(formatTimestamp(row.occurred_at))}</small><span>${escapeText(row.model || "模型未知")}</span><strong><b>${escapeText(formatToken(tokens))}</b><em>${escapeText(formatMeasure(cost, "cost"))} ${escapeText(billingCurrency)}</em></strong></div>`; }).join("") : '<div class="loading">暂无请求记录。</div>';
 }
 
 document.getElementById("loginForm").addEventListener("submit", async event => {
