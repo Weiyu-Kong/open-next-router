@@ -156,7 +156,6 @@ function renderDimension() {
   const cost = displayDimension === "cost";
   meter.classList.toggle("cost-mode", cost);
   document.getElementById("metricLabel").textContent = cost ? "已扣费用" : "令牌用量";
-  document.getElementById("metricUnit").textContent = cost ? (billingCurrency || "货币未知") : "M（百万）";
   document.querySelectorAll(".dimension-option").forEach(button => {
     const selected = button.dataset.dimension === displayDimension;
     button.classList.toggle("active", selected);
