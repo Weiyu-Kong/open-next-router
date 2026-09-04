@@ -12,6 +12,7 @@ let meterModels = [];
 let billingCurrency = "";
 let requestUnit = "m";
 let usageChart;
+let usageModelChart;
 let requestTable;
 let bridgeNoticePending = new URLSearchParams(window.location.search).get("bridge") || "";
 
@@ -37,12 +38,33 @@ function showError(element, error) {
 
 function initializeTimezones() {
   const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  if (browserTimezone !== "UTC") {
+  const zones = typeof Intl.supportedValuesOf === "function"
+    ? Intl.supportedValuesOf("timeZone")
+    : ["Africa/Cairo", "America/Los_Angeles", "America/New_York", "Asia/Shanghai", "Asia/Tokyo", "Australia/Sydney", "Europe/Berlin", "Europe/London", "Pacific/Auckland"];
+  const allZones = [...new Set(["UTC", ...zones, browserTimezone])].sort((left, right) => {
+    if (left === "UTC") return -1;
+    if (right === "UTC") return 1;
+    return left.localeCompare(right);
+  });
+  timezoneControl.innerHTML = "";
+  allZones.forEach(zone => {
     const option = document.createElement("option");
-    option.value = browserTimezone;
-    option.textContent = browserTimezone;
+    option.value = zone;
+    option.textContent = timezoneLabel(zone);
     timezoneControl.append(option);
-    timezoneControl.value = browserTimezone;
+  });
+  timezoneControl.value = allZones.includes(browserTimezone) ? browserTimezone : "UTC";
+}
+
+function timezoneLabel(zone) {
+  if (zone === "UTC") return "协调世界时 (UTC)";
+  try {
+    const parts = new Intl.DateTimeFormat("zh-CN", {timeZone: zone, timeZoneName: "long"})
+      .formatToParts(new Date(Date.UTC(2026, 0, 15, 12)));
+    const name = parts.find(part => part.type === "timeZoneName")?.value || zone;
+    return `${name} (${zone})`;
+  } catch (_) {
+    return zone;
   }
 }
 
@@ -260,22 +282,30 @@ function renderUsage(rows) {
   const selectedModel = document.getElementById("modelFilter")?.value || "";
   rows = rows.filter(row => !selectedModel || (row.dimensions || {}).model === selectedModel);
   if (!rows.length) {
+    usageChart?.destroy();
+    usageModelChart?.destroy();
+    usageChart = undefined;
+    usageModelChart = undefined;
     document.getElementById("usage").innerHTML = '<div class="loading">此时间范围内暂无用量记录。</div>';
     return;
   }
-  const buckets = rows.reduce((map, row) => { const key = row.dimensions?.bucket || ""; map[key] = (map[key] || 0) + decimalValue(row.measures?.[displayDimension === "cost" ? "amount" : "quantity"]); return map; }, {});
-  const chart = '<div class="usage-chart"><canvas id="usageChart"></canvas></div>';
-  document.getElementById("usage").innerHTML = chart + '<div class="usage-grid">' + rows.map(row => {
-    const dimensions = row.dimensions || {};
-    const measures = row.measures || {};
-    const measure = displayDimension === "cost" ? measures.amount : measures.quantity;
-    const displayValue = displayDimension === "cost" ? formatMeasure(measure, "cost") : formatToken(measure);
-    const displaySuffix = displayDimension === "cost" ? ` ${billingCurrency}` : "";
-    return `<article class="usage-card"><h3>${escapeText(dimensions.model || "全部模型")}</h3><strong>${escapeText(displayValue)}${escapeText(displaySuffix)}</strong><small>${escapeText(formatBucket(dimensions.bucket))}</small></article>`;
-  }).join("") + "</div>";
+  const measureKey = displayDimension === "cost" ? "amount" : "quantity";
+  const buckets = rows.reduce((map, row) => {
+    const key = row.dimensions?.bucket || "";
+    map[key] = (map[key] || 0) + decimalValue(row.measures?.[measureKey]);
+    return map;
+  }, {});
+  const labels = Object.keys(buckets).sort();
+  const models = [...new Set(rows.map(row => row.dimensions?.model || "全部模型"))].sort();
+  const chart = '<div class="usage-chart"><canvas id="usageChart"></canvas></div><div class="usage-chart usage-model-chart"><canvas id="usageModelChart"></canvas></div>';
+  document.getElementById("usage").innerHTML = chart;
   if (window.Chart) {
     usageChart?.destroy();
-    usageChart = new Chart(document.getElementById("usageChart"), {type: "bar", data: {labels: Object.keys(buckets), datasets: [{label: displayDimension === "cost" ? "消费" : "Token", data: Object.values(buckets), backgroundColor: displayDimension === "cost" ? "#c16a25" : "#176b63", borderRadius: 5, borderSkipped: false, maxBarThickness: 42}]}, options: {responsive: true, maintainAspectRatio: false, animation: {duration: 650, easing: "easeOutQuart"}, plugins: {legend: {display: false}, tooltip: {callbacks: {label: context => displayDimension === "cost" ? `${formatMeasure(context.raw, "cost")} ${billingCurrency}` : formatToken(context.raw)}}}, scales: {x: {grid: {display: false}}, y: {beginAtZero: true, ticks: {callback: value => displayDimension === "cost" ? value : formatToken(value)}, grid: {color: "#e5ecef"}}}}});
+    usageModelChart?.destroy();
+    const colors = ["#176b63", "#c16a25", "#3568a8", "#9b4d85", "#6f7d32", "#b64242"];
+    const chartOptions = {responsive: true, maintainAspectRatio: false, animation: {duration: 650, easing: "easeOutQuart"}, plugins: {tooltip: {callbacks: {label: context => displayDimension === "cost" ? `${context.dataset.label}: ${formatMeasure(context.raw, "cost")} ${billingCurrency}` : `${context.dataset.label}: ${formatToken(context.raw)}`}}}, scales: {x: {grid: {display: false}}, y: {beginAtZero: true, ticks: {callback: value => displayDimension === "cost" ? formatMeasure(value, "cost") : formatToken(value)}, grid: {color: "#e5ecef"}}}};
+    usageChart = new Chart(document.getElementById("usageChart"), {type: "bar", data: {labels, datasets: [{label: displayDimension === "cost" ? "消费" : "Token", data: labels.map(label => buckets[label]), backgroundColor: displayDimension === "cost" ? "#c16a25" : "#176b63", borderRadius: 5, borderSkipped: false, maxBarThickness: 42}]}, options: {...chartOptions, plugins: {...chartOptions.plugins, legend: {display: false}}}});
+    usageModelChart = new Chart(document.getElementById("usageModelChart"), {type: "line", data: {labels, datasets: models.map((model, index) => ({label: model, data: labels.map(label => rows.filter(row => (row.dimensions?.model || "全部模型") === model && (row.dimensions?.bucket || "") === label).reduce((total, row) => total + decimalValue(row.measures?.[measureKey]), 0)), borderColor: colors[index % colors.length], backgroundColor: colors[index % colors.length], pointRadius: 3, pointHoverRadius: 5, tension: 0.25, fill: false}))}, options: {...chartOptions, plugins: {...chartOptions.plugins, legend: {display: true, position: "top", labels: {usePointStyle: true, boxWidth: 8}}}}});
   }
 }
 
