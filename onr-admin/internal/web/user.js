@@ -8,6 +8,7 @@ const bridgeNotice = document.getElementById("bridgeNotice");
 let displayDimension = "tokens";
 let usageRows = [];
 let requestRows = [];
+let meterModels = [];
 let billingCurrency = "";
 let requestUnit = "m";
 let usageChart;
@@ -211,13 +212,6 @@ async function refresh() {
     usageQuery.set("bucket", document.getElementById("bucket").value);
     const usage = await api(`/api/user/usage?${usageQuery}`);
     usageRows = usage.rows || [];
-    const modelFilter = document.getElementById("modelFilter");
-    if (modelFilter) {
-      const selected = modelFilter.value;
-      const models = [...new Set(usageRows.map(row => row.dimensions?.model).filter(Boolean))].sort();
-      modelFilter.innerHTML = '<option value="">全部模型</option>' + models.map(model => `<option value="${escapeText(model)}">${escapeText(model)}</option>`).join("");
-      modelFilter.value = models.includes(selected) ? selected : "";
-    }
     billingCurrency = usage.currency || billingCurrency;
     const requests = await api(`/api/user/requests?${query}`);
     requestRows = requests.requests || [];
@@ -235,6 +229,8 @@ async function refreshModels() {
   try {
     const data = await api("/api/user/models");
     const models = data.models || [];
+    meterModels = models;
+    refreshModelFilter();
     target.innerHTML = models.length ? models.map(model => {
       const pricing = model.pricing || {};
       const prices = [pricing.input && `输入 ${pricing.input}`, pricing.output && `输出 ${pricing.output}`, pricing.cache_hit && `缓存命中 ${pricing.cache_hit}`].filter(Boolean).join(" · ");
@@ -243,6 +239,21 @@ async function refreshModels() {
   } catch (error) {
     target.innerHTML = `<div class="error">${escapeText(error.message)}</div>`;
   }
+}
+
+function refreshModelFilter() {
+  const modelFilter = document.getElementById("modelFilter");
+  if (!modelFilter) return;
+  const selected = modelFilter.value;
+  const models = meterModels
+    .filter(model => model.available === true)
+    .map(model => model.id)
+    .filter(Boolean)
+    .sort();
+  modelFilter.innerHTML = '<option value="">全部模型</option>' + models
+    .map(model => `<option value="${escapeText(model)}">${escapeText(model)}</option>`)
+    .join("");
+  modelFilter.value = models.includes(selected) ? selected : "";
 }
 
 function renderUsage(rows) {

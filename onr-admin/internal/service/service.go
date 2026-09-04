@@ -169,6 +169,9 @@ func (s *Service) ListAccessKeys(ctx context.Context) ([]controlplane.AccessKeyR
 		return nil, fmt.Errorf("redis access-key management is disabled")
 	}
 	v, e := s.cp.ListAccessKeyRecords(ctx)
+	for i := range v {
+		v[i].AllowedModels = nil
+	}
 	sort.Slice(v, func(i, j int) bool { return v[i].Name < v[j].Name })
 	return v, e
 }
@@ -176,7 +179,11 @@ func (s *Service) GetAccessKey(ctx context.Context, name string) (*controlplane.
 	if s.cp == nil {
 		return nil, fmt.Errorf("redis access-key management is disabled")
 	}
-	return s.cp.GetAccessKeyRecord(ctx, name)
+	record, err := s.cp.GetAccessKeyRecord(ctx, name)
+	if record != nil {
+		record.AllowedModels = nil
+	}
+	return record, err
 }
 
 func (s *Service) UpdateAccessKeyRouting(ctx context.Context, name string, in UpdateAccessKeyRoutingInput) (*controlplane.AccessKeyRecord, error) {
@@ -207,7 +214,10 @@ func (s *Service) UpdateAccessKeyRouting(ctx context.Context, name string, in Up
 		}
 	}
 	rec.AllowedProviders = providers
-	rec.AllowedModels = parseCommaList(in.AllowedModels, false)
+	// Access Keys are intentionally model-unrestricted. Model availability is
+	// controlled by the provider-neutral catalog and provider routing, not by
+	// per-key model allowlists.
+	rec.AllowedModels = nil
 	rec.ProviderKeyBindings = bindings
 	if err := s.cp.UpdateAccessKeyRouting(ctx, *rec, in.ExpectedVersion); err != nil {
 		return nil, err
@@ -237,15 +247,16 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		accountID = strings.TrimSpace(in.SubjectID)
 	}
 	rec := controlplane.AccessKeyRecord{
-		Name:                in.Name,
-		SecretHash:          s.cp.HashAccessKey(secret),
-		Status:              "pending",
-		SubjectType:         in.SubjectType,
-		SubjectID:           in.SubjectID,
-		AccountID:           accountID,
-		RoutePolicyID:       strings.TrimSpace(in.RoutePolicyID),
-		AllowedProviders:    parseCommaList(in.AllowedProviders, true),
-		AllowedModels:       parseCommaList(in.AllowedModels, false),
+		Name:             in.Name,
+		SecretHash:       s.cp.HashAccessKey(secret),
+		Status:           "pending",
+		SubjectType:      in.SubjectType,
+		SubjectID:        in.SubjectID,
+		AccountID:        accountID,
+		RoutePolicyID:    strings.TrimSpace(in.RoutePolicyID),
+		AllowedProviders: parseCommaList(in.AllowedProviders, true),
+		// Access Keys do not impose per-model restrictions.
+		AllowedModels:       nil,
 		ProviderKeyBindings: normalizeProviderKeyBindings(in.ProviderKeyBindings),
 		ExpiresAt:           in.ExpiresAt,
 		Metadata:            in.Metadata,

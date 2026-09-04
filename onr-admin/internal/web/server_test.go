@@ -250,6 +250,11 @@ func TestUserPortalAssets(t *testing.T) {
 	if !strings.Contains(assets["/user"], `id="models-panel"`) || !strings.Contains(assets["/user.js"], `/api/user/models`) {
 		t.Fatal("user portal is missing the model catalog page")
 	}
+	for _, expected := range []string{"let meterModels = []", "refreshModelFilter", "model.available === true"} {
+		if !strings.Contains(assets["/user.js"], expected) {
+			t.Fatalf("user script is missing catalog-backed model filter logic %q", expected)
+		}
+	}
 	for _, expected := range []string{"measures.amount", "measures.quantity", "metric?.amount", "metric?.value"} {
 		if !strings.Contains(assets["/user.js"], expected) {
 			t.Fatalf("user script is missing %q", expected)
@@ -272,10 +277,13 @@ func TestAdminPortalIncludesAccessKeyRoutingEditor(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("status=%d", res.Code)
 	}
-	for _, expected := range []string{"editProviders", "editModels", "editBindings", "/routing", `method:"PUT"`, "modelPickerHTML", "selectedModelValues"} {
+	for _, expected := range []string{"editProviders", "editBindings", "/routing", `method:"PUT"`, "allowed_models:\"\"", "模型权限：不限制"} {
 		if !strings.Contains(res.Body.String(), expected) {
 			t.Fatalf("admin script is missing %q", expected)
 		}
+	}
+	if strings.Contains(res.Body.String(), "modelPickerHTML(\"newModels\")") || strings.Contains(res.Body.String(), "modelPickerHTML(\"editModels\"") {
+		t.Fatal("access key management must not expose a model restriction picker")
 	}
 }
 

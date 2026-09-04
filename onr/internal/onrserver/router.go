@@ -109,7 +109,6 @@ func NewRouter(
 						SubjectID:           subjectID,
 						RoutePolicyID:       strings.TrimSpace(record.RoutePolicyID),
 						AllowedProviders:    append([]string(nil), record.AllowedProviders...),
-						AllowedModels:       append([]string(nil), record.AllowedModels...),
 						ProviderKeyBindings: cloneStringMap(record.ProviderKeyBindings),
 					}, true, nil
 				}
