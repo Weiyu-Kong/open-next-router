@@ -305,6 +305,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/admin/access-keys/migrate", s.handleAdminMigrate)
 	api.HandleFunc("/api/admin/access-keys/", s.handleAdminAccessKey)
 	api.HandleFunc("/api/admin/meter/access-keys", s.handleAdminMeterAccessKeys)
+	api.HandleFunc("/api/admin/models", s.handleAdminModels)
 	userAPI := http.NewServeMux()
 	userAPI.HandleFunc("/api/user/bridge", s.handleUserBridge)
 	userAPI.HandleFunc("/api/user/login", s.handleUserLogin)
@@ -316,6 +317,7 @@ func (s *Server) Handler() http.Handler {
 	userAPI.HandleFunc("/api/user/requests", s.handleUserRequests)
 	userAPI.HandleFunc("/api/user/bills", s.handleUserBills)
 	userAPI.HandleFunc("/api/user/freshness", s.handleUserFreshness)
+	userAPI.HandleFunc("/api/user/models", s.handleUserModels)
 	mux.Handle("/api/user/", userAPI)
 	mux.Handle("/api/", s.authMiddleware(api))
 	return mux
@@ -663,6 +665,59 @@ func (s *Server) handleUserFreshness(w http.ResponseWriter, r *http.Request) {
 		"pending_billing_events": pending,
 		"eventual_consistency":   true,
 	})
+}
+
+func (s *Server) handleUserModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if _, ok := s.userSession(r); !ok {
+		writeJSONAny(w, http.StatusUnauthorized, map[string]any{"ok": false, "error": "user authentication required"})
+		return
+	}
+	if s.service == nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "model catalog unavailable"})
+		return
+	}
+	catalog, err := s.service.ModelCatalog()
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "model catalog unavailable"})
+		return
+	}
+	models := catalog.Models()
+	public := make([]map[string]any, 0, len(models))
+	for _, model := range models {
+		available := false
+		for _, mapping := range model.Providers {
+			if mapping.Supported {
+				available = true
+				break
+			}
+		}
+		public = append(public, map[string]any{
+			"id": model.ID, "provider": model.Provider,
+			"pricing": model.Pricing, "available": available,
+		})
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "models": public})
+}
+
+func (s *Server) handleAdminModels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if s.service == nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "model catalog unavailable"})
+		return
+	}
+	catalog, err := s.service.ModelCatalog()
+	if err != nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "model catalog unavailable"})
+		return
+	}
+	writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "models": catalog.Models()})
 }
 
 func parseUnixQuery(value string, fallback int64) int64 {

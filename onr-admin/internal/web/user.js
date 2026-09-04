@@ -205,6 +205,7 @@ async function refresh() {
     billingCurrency = balance.currency || snapshot.currency || "";
     document.getElementById("currency").textContent = billingCurrency;
     await refreshFreshness();
+    await refreshModels();
 
     const usageQuery = new URLSearchParams(query);
     usageQuery.set("bucket", document.getElementById("bucket").value);
@@ -225,6 +226,22 @@ async function refresh() {
   } catch (error) {
     showError(meterError, error);
     document.getElementById("usage").innerHTML = "";
+  }
+}
+
+async function refreshModels() {
+  const target = document.getElementById("models");
+  if (!target) return;
+  try {
+    const data = await api("/api/user/models");
+    const models = data.models || [];
+    target.innerHTML = models.length ? models.map(model => {
+      const pricing = model.pricing || {};
+      const prices = [pricing.input && `输入 ${pricing.input}`, pricing.output && `输出 ${pricing.output}`, pricing.cache_hit && `缓存命中 ${pricing.cache_hit}`].filter(Boolean).join(" · ");
+      return `<article class="model-card"><div class="model-card-head"><h3>${escapeText(model.id)}</h3><span class="model-status ${model.available ? "available" : "unavailable"}">${model.available ? "可调用" : "待接入"}</span></div><p>${escapeText(model.provider || "通用模型")}</p><strong>${escapeText(prices || "价格暂未配置")}</strong><small>${escapeText(pricing.unit || "")}</small></article>`;
+    }).join("") : '<div class="loading">暂无模型。</div>';
+  } catch (error) {
+    target.innerHTML = `<div class="error">${escapeText(error.message)}</div>`;
   }
 }
 
@@ -302,6 +319,7 @@ function changeUnit(value) { requestUnit = value; document.getElementById("reque
 document.getElementById("requestUnit").onchange = event => changeUnit(event.target.value);
 document.getElementById("usageUnit").onchange = event => changeUnit(event.target.value);
 document.getElementById("overviewRefresh").onclick = refresh;
+document.getElementById("modelsRefresh").onclick = refreshModels;
 document.querySelectorAll(".meter-nav-item,[data-goto]").forEach(button => button.onclick = () => { const panel = button.dataset.panel || button.dataset.goto; document.querySelectorAll(".meter-panel").forEach(item => item.classList.toggle("active", item.id === (panel === "overview" ? "overview" : panel))); document.querySelectorAll(".meter-nav-item").forEach(item => item.classList.toggle("active", item.dataset.panel === panel)); });
 document.querySelectorAll(".dimension-option").forEach(button => {
   button.onclick = () => {

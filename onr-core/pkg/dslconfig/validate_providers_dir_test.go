@@ -52,6 +52,25 @@ func TestValidateCtyunProviderSanitizesResponseModel(t *testing.T) {
 	}
 }
 
+func TestCtyunExpectedModelMappingsAreExplicit(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "config", "providers", "ctyun.conf")
+	pf, err := ValidateProviderFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"deepseek-v4-pro-0813", "deepseek-v4-flash-0731", "minimax-m3", "kimi-k3", "qwen3.8-max", "qwen3.7-plus", "qwen3.6-flash", "qwen3.6-plus", "glm-5.3", "glm-5.2"}
+	for _, match := range pf.Request.Matches {
+		if match.API != "chat.completions" {
+			continue
+		}
+		for _, model := range want {
+			if _, ok := match.Transform.ModelMap.Map[model]; !ok {
+				t.Fatalf("ctyun %s stream=%v missing model_map for %q", match.API, match.Stream, model)
+			}
+		}
+	}
+}
+
 func containsLoadedProvider(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {

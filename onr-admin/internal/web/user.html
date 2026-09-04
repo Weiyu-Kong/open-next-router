@@ -27,6 +27,7 @@
       <nav class="meter-nav" aria-label="面板导航">
         <button class="meter-nav-item active" data-panel="overview">总览</button>
         <button class="meter-nav-item" data-panel="usage-panel">用量详情</button>
+        <button class="meter-nav-item" data-panel="models-panel">支持模型</button>
         <button class="meter-nav-item" data-panel="requests-panel">请求明细</button>
         <button class="meter-nav-item" data-panel="docs-panel">API 文档</button>
       </nav>
@@ -52,6 +53,11 @@
         <section id="customRange" class="custom-range hidden"><label>开始<input id="startTime" type="datetime-local"></label><label>结束<input id="endTime" type="datetime-local"></label></section>
         <div class="metric-heading"><div id="metricLabel" class="tag">令牌用量</div><label class="inline-unit">Token 单位<select id="usageUnit" aria-label="图表 Token 单位"><option value="m">M（百万）</option><option value="k">K（千）</option><option value="raw">原始数量</option></select></label><span id="metricUnit">M（百万）</span></div>
         <div id="usage" class="usage"><div class="loading">正在加载用量...</div></div>
+      </section>
+
+      <section id="models-panel" class="meter-panel">
+        <div class="panel-title"><div><p class="tag">模型目录</p><h2>支持的模型</h2></div><button id="modelsRefresh" class="quiet">刷新</button></div>
+        <div id="models" class="model-grid"><div class="loading">正在加载模型...</div></div>
       </section>
 
       <section id="requests-panel" class="meter-panel">

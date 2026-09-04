@@ -160,6 +160,8 @@ type Config struct {
 	Models struct {
 		// File is an optional models list file. If not set or missing, /v1/models returns an empty list.
 		File string `yaml:"file"`
+		// CatalogFile contains provider-neutral model cards for the meter UI.
+		CatalogFile string `yaml:"catalog_file"`
 	} `yaml:"models"`
 
 	OAuth struct {
@@ -293,6 +295,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if strings.TrimSpace(cfg.Models.File) == "" {
 		cfg.Models.File = "./models.yaml"
+	}
+	if strings.TrimSpace(cfg.Models.CatalogFile) == "" {
+		cfg.Models.CatalogFile = "./config/models.catalog.yaml"
 	}
 	if strings.TrimSpace(cfg.OAuth.TokenPersist.Dir) == "" {
 		cfg.OAuth.TokenPersist.Dir = "./run/oauth"

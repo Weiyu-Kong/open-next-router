@@ -11,6 +11,7 @@ import (
 	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
+	"github.com/r9s-ai/open-next-router/pkg/modelcatalog"
 	"github.com/shopspring/decimal"
 )
 
@@ -149,6 +150,13 @@ func (s *Service) Config() *config.Config {
 		return nil
 	}
 	return s.cfg
+}
+
+func (s *Service) ModelCatalog() (*modelcatalog.Catalog, error) {
+	if s == nil || s.cfg == nil {
+		return nil, fmt.Errorf("configuration is unavailable")
+	}
+	return modelcatalog.Load(s.cfg.Models.CatalogFile)
 }
 func (s *Service) Client() *controlplane.Client {
 	if s == nil {

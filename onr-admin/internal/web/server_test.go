@@ -247,6 +247,9 @@ func TestUserPortalAssets(t *testing.T) {
 	if !strings.Contains(assets["/user"], `data-dimension="tokens"`) || !strings.Contains(assets["/user"], `data-dimension="cost"`) {
 		t.Fatal("user portal is missing the token/cost dimension control")
 	}
+	if !strings.Contains(assets["/user"], `id="models-panel"`) || !strings.Contains(assets["/user.js"], `/api/user/models`) {
+		t.Fatal("user portal is missing the model catalog page")
+	}
 	for _, expected := range []string{"measures.amount", "measures.quantity", "metric?.amount", "metric?.value"} {
 		if !strings.Contains(assets["/user.js"], expected) {
 			t.Fatalf("user script is missing %q", expected)
@@ -269,9 +272,78 @@ func TestAdminPortalIncludesAccessKeyRoutingEditor(t *testing.T) {
 	if res.Code != http.StatusOK {
 		t.Fatalf("status=%d", res.Code)
 	}
-	for _, expected := range []string{"editProviders", "editModels", "editBindings", "/routing", `method:"PUT"`} {
+	for _, expected := range []string{"editProviders", "editModels", "editBindings", "/routing", `method:"PUT"`, "modelPickerHTML", "selectedModelValues"} {
 		if !strings.Contains(res.Body.String(), expected) {
 			t.Fatalf("admin script is missing %q", expected)
+		}
+	}
+}
+
+func TestModelCatalogEndpointsSeparateAdminMappingsFromUserView(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "openai.conf"), []byte(validOpenAIConf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	redisServer := miniredis.RunT(t)
+	catalogPath := filepath.Join(t.TempDir(), "catalog.yaml")
+	if err := os.WriteFile(catalogPath, []byte(`models:
+  - id: qwen3.8-max
+    provider: Qwen
+    pricing: {input: "12", output: "36", cache_hit: "1.5", unit: "CNY / 1M tokens"}
+    providers:
+      ctyun: {supported: true, model_id: upstream-secret-id, note: admin-only-note}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "onr.yaml")
+	cfg := "models:\n  catalog_file: " + catalogPath + "\nredis:\n  enabled: true\n  addr: redis://" + redisServer.Addr() + "\n  access_key_hash_secret: test-secret\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv, err := newServerWithOptions(dir, t.TempDir(), defaultAPIBaseURL, cfgPath, "admin-token", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = srv.Close() }()
+	record := controlplane.AccessKeyRecord{Name: "key-a", SecretHash: srv.service.Client().HashAccessKey("secret-a"), Status: "active", SubjectType: "api_key", SubjectID: "subject-a", AccountID: "account-a"}
+	if err := srv.service.Client().CreateAccessKey(t.Context(), record); err != nil {
+		t.Fatal(err)
+	}
+	srv.userSessions["session-a"] = userSession{Record: record, ExpiresAt: time.Now().Add(time.Hour)}
+
+	unauthorized := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/user/models", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated user status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	userReq := httptest.NewRequest(http.MethodGet, "/api/user/models", nil)
+	userReq.AddCookie(&http.Cookie{Name: userSessionCookie, Value: "session-a"})
+	userRes := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(userRes, userReq)
+	if userRes.Code != http.StatusOK {
+		t.Fatalf("user status=%d body=%s", userRes.Code, userRes.Body.String())
+	}
+	userBody := userRes.Body.String()
+	for _, secret := range []string{"ctyun", "model_id", "upstream-secret-id", "admin-only-note"} {
+		if strings.Contains(userBody, secret) {
+			t.Fatalf("user model response leaked %q: %s", secret, userBody)
+		}
+	}
+	if !strings.Contains(userBody, `"id":"qwen3.8-max"`) || !strings.Contains(userBody, `"available":true`) {
+		t.Fatalf("user model response is incomplete: %s", userBody)
+	}
+
+	adminReq := httptest.NewRequest(http.MethodGet, "/api/admin/models", nil)
+	adminReq.Header.Set("Authorization", "Bearer admin-token")
+	adminRes := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(adminRes, adminReq)
+	if adminRes.Code != http.StatusOK {
+		t.Fatalf("admin status=%d body=%s", adminRes.Code, adminRes.Body.String())
+	}
+	for _, expected := range []string{"ctyun", "model_id", "upstream-secret-id", "admin-only-note"} {
+		if !strings.Contains(adminRes.Body.String(), expected) {
+			t.Fatalf("admin model response is missing %q: %s", expected, adminRes.Body.String())
 		}
 	}
 }

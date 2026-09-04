@@ -203,6 +203,25 @@ billing events.
 - [ ] Document production migration, rollback, monitoring, and incident
   recovery procedures.
 
+### Stage 8: Provider-Neutral Model Catalog - Complete for MVP
+
+- [x] Add every model from `reference/models-expected.md` to the provider-neutral
+  catalog and the runtime selectable model list.
+- [x] Add model cards to both the administrator console and the user Meter
+  portal, including input, output, and cache-hit pricing when available.
+- [x] Preserve blank pricing fields when the Ctyun price document has no exact
+  public-model match.
+- [x] Keep provider mappings and upstream model IDs in provider-specific
+  configuration and admin-only metadata; user model APIs expose no provider
+  names, internal IDs, or mapping notes.
+- [x] Add explicit Ctyun mappings for the currently supported subset and keep
+  unsupported catalog models selectable but unroutable until a provider mapping
+  is added.
+- [x] Add an admin model picker with all catalog models, search, select-all,
+  and clear actions for Access Key creation and routing edits.
+- [x] Add tests for the 38-model set, the 16 exact Ctyun price matches, Ctyun
+  DSL mapping consistency, user/admin API separation, and model-page assets.
+
 ## 6. Next Execution Order
 
 1. Run focused local-ledger and service tests for account isolation, initial
@@ -217,6 +236,9 @@ billing events.
    provider that exposes a supported usage API.
 5. Verify two-instance deployment and Redis persistence/HA behavior.
 6. Complete deployment and operations documentation.
+7. Add additional provider catalogs and mappings only through explicit provider
+   DSL directives, catalog metadata, pricing data, and provider validation
+   tests.
 
 ## 7. Requirement Traceability
 
@@ -228,6 +250,7 @@ billing events.
 | Initial credit and small overspend | Atomic initial credit; post-response accounting | Concurrency and restart acceptance |
 | Admin key and balance control | Web/TUI lifecycle and local credit/debit | Browser and two-key acceptance |
 | User usage and balance views | Scoped APIs and portal model/time aggregation | Browser verification |
+| Provider-neutral model catalog | 38 catalog entries, pricing cards, explicit provider mappings, admin picker | Browser visual verification |
 | Distributed operation | Shared Redis-compatible state and queue primitives | Two-instance/HA Redis test |
 | Provider monitor APIs | Ctyun EOP normalization and generic adapter foundations | Checkpoints and reconciliation worker |
 
@@ -248,8 +271,13 @@ billing events.
   adapter packages.
 - 2026-09-03: Removed the old external Meterry runtime path and documentation.
   `billing.edgefn.dev` is not a dependency of the local billing design.
-- Pending: normal-host `go test ./...`, live Ctyun request, two-key isolation,
-  revocation, Redis restart/backup, and distributed failover verification.
+- 2026-09-04: Added the 38-model provider-neutral catalog, Ctyun pricing
+  metadata, explicit Ctyun model mappings, admin/user model pages, and the
+  admin model picker. Catalog, price, DSL consistency, API isolation, Web,
+  Redis, and billing tests passed; JavaScript syntax checks and `git diff
+  --check` also passed.
+- Pending: live Ctyun request, two-key isolation, revocation, Redis
+  restart/backup, and distributed failover verification.
 
 ## 9. Maintenance Rules
 

@@ -14,6 +14,7 @@ import (
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/models"
 	"github.com/r9s-ai/open-next-router/onr/internal/onrserver"
 	"github.com/r9s-ai/open-next-router/pkg/config"
+	"github.com/r9s-ai/open-next-router/pkg/modelcatalog"
 	"gopkg.in/yaml.v3"
 )
 
@@ -98,6 +99,10 @@ func runConfigTest(cfgPath string) error {
 		return fmt.Errorf("models: %w", err)
 	}
 	fmt.Fprintln(os.Stdout, "ok: models")
+	if _, err := modelcatalog.Load(cfg.Models.CatalogFile); err != nil {
+		return fmt.Errorf("model catalog: %w", err)
+	}
+	fmt.Fprintln(os.Stdout, "ok: model catalog")
 	return nil
 }
 

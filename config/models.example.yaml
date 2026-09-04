@@ -1,24 +1,41 @@
+# Provider-neutral selectable models. Provider-specific model IDs live in
+# config/providers/*.conf; a model is routable only when a provider is listed.
 models:
-  # A model can be bound to multiple providers. When multiple providers are configured,
-  # open-next-router selects the provider using the configured strategy.
-  #
-  # Supported strategies:
-  # - round_robin (default)
-
-  gpt-4o-mini:
-    providers:
-      - openai
-      - r9s
-    strategy: round_robin
-    owned_by: open-next-router
-
-  claude-haiku-4-5:
-    providers:
-      - anthropic
-    strategy: round_robin
-
-  gemini-2.5-flash:
-    providers:
-      - gemini
-      - vertex
-    strategy: round_robin
+  claude-opus-5-fast: {providers: []}
+  claude-opus-5: {providers: []}
+  claude-sonnet-5: {providers: []}
+  claude-fable-5: {providers: []}
+  claude-opus-4.8-fast: {providers: []}
+  claude-opus-4.8: {providers: []}
+  claude-opus-4.7: {providers: []}
+  deepseek-v4-pro-0813: {providers: [ctyun]}
+  deepseek-v4-flash-0731: {providers: [ctyun]}
+  deepseek-v3.2: {providers: []}
+  gemini-3.7-flash: {providers: []}
+  gemini-3.6-flash: {providers: []}
+  gemini-3.5-flash-lite: {providers: []}
+  minimax-m3: {providers: [ctyun]}
+  kimi-k3: {providers: [ctyun]}
+  kimi-k2.7-code: {providers: []}
+  kimi-k2.6: {providers: []}
+  gpt-5.6-luna: {providers: []}
+  gpt-5.6-terra: {providers: []}
+  gpt-5.6-sol: {providers: []}
+  gpt-5.5-pro: {providers: []}
+  gpt-5.5: {providers: []}
+  qwen3.8-flash: {providers: []}
+  qwen3.8-27b: {providers: []}
+  qwen-image-3-pro: {providers: []}
+  qwen-image-3: {providers: []}
+  qwen3.8-max: {providers: [ctyun]}
+  qwen3.7-flash: {providers: []}
+  qwen3.7-plus: {providers: [ctyun]}
+  qwen3.6-flash: {providers: [ctyun]}
+  qwen3.6-plus: {providers: [ctyun]}
+  qwen3.6-27b: {providers: []}
+  qwen3-8b: {providers: []}
+  qwen3-coder-next: {providers: []}
+  glm-5.3-flash: {providers: []}
+  glm-5.3: {providers: [ctyun]}
+  glm-5.2: {providers: [ctyun]}
+  glm-5.1: {providers: []}

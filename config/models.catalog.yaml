@@ -1,0 +1,41 @@
+# Provider-neutral model catalog for the meter and model selection UI.
+# Empty pricing fields mean no matching Ctyun price was found.
+models:
+  - {id: claude-opus-5-fast, provider: Anthropic, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: claude-opus-5, provider: Anthropic, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: claude-sonnet-5, provider: Anthropic, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: claude-fable-5, provider: Anthropic, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: claude-opus-4.8-fast, provider: Anthropic, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: claude-opus-4.8, provider: Anthropic, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: claude-opus-4.7, provider: Anthropic, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: deepseek-v4-pro-0813, provider: DeepSeek, providers: {ctyun: {supported: true, model_id: "20e81bd57e7a4be281e5d0ef0afc93d8"}}}
+  - {id: deepseek-v4-flash-0731, provider: DeepSeek, pricing: {input: "1", output: "2", cache_hit: "0.2", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: true, model_id: "c60c9aec5710499dafae8e4f395698d8"}}}
+  - {id: deepseek-v3.2, provider: DeepSeek, pricing: {input: "2", output: "3", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: gemini-3.7-flash, provider: Google, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: gemini-3.6-flash, provider: Google, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: gemini-3.5-flash-lite, provider: Google, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: minimax-m3, provider: MiniMax, pricing: {input: "0-512k: 2.1; 512k-1024k: 4.2", output: "0-512k: 8.4; 512k-1024k: 16.8", cache_hit: "0-512k: 0.42; 512k-1024k: 0.84", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: true, model_id: "62cc400ee35e43808b1688fcbc9c3e88"}}}
+  - {id: kimi-k3, provider: Moonshot AI, pricing: {input: "0-1024k: 20", output: "0-1024k: 100", cache_hit: "0-1024k: 2", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: true, model_id: "76ab208968e0414b927a9a6a97dfc3e1"}}}
+  - {id: kimi-k2.7-code, provider: Moonshot AI, pricing: {input: "6.5", output: "27", cache_hit: "1.3", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: false, note: "Price exists; no Ctyun model ID"}}}
+  - {id: kimi-k2.6, provider: Moonshot AI, pricing: {input: "6.5", output: "27", cache_hit: "1.3", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: false, note: "Price exists; no Ctyun model ID"}}}
+  - {id: gpt-5.6-luna, provider: OpenAI, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: gpt-5.6-terra, provider: OpenAI, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: gpt-5.6-sol, provider: OpenAI, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: gpt-5.5-pro, provider: OpenAI, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: gpt-5.5, provider: OpenAI, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: qwen3.8-flash, provider: Qwen, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: qwen3.8-27b, provider: Qwen, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: qwen-image-3-pro, provider: Qwen, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: qwen-image-3, provider: Qwen, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: qwen3.8-max, provider: Qwen, pricing: {input: "12", output: "36", cache_hit: "1.5", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: true, model_id: "3bbfba16dd6e4fed90af61eee76db87f"}}}
+  - {id: qwen3.7-flash, provider: Qwen, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: qwen3.7-plus, provider: Qwen, pricing: {input: "0-256k: 2; 256k-1024k: 6", output: "0-256k: 8; 256k-1024k: 24", cache_hit: "0-256k: 0.4; 256k-1024k: 1.2", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: true, model_id: "98df9efe26894003be658e1e70ff0105"}}}
+  - {id: qwen3.6-flash, provider: Qwen, pricing: {input: "0-256k: 1.2; 256k-1024k: 4.8", output: "0-256k: 7.2; 256k-1024k: 28.8", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: true, model_id: "c7aca8b6434e4a448e9e3ace7815b74f"}}}
+  - {id: qwen3.6-plus, provider: Qwen, pricing: {input: "0-256k: 2; 256k-1M: 8", output: "0-256k: 12; 256k-1M: 48", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: true, model_id: "3fd7b6be3bea4f66adc276af23b5c52b"}}}
+  - {id: qwen3.6-27b, provider: Qwen, pricing: {input: "3", output: "18", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: false, note: "Price exists; no Ctyun model ID"}}}
+  - {id: qwen3-8b, provider: Qwen, pricing: {input: "0.3", output: "0.6", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: false, note: "Price exists; no Ctyun model ID"}}}
+  - {id: qwen3-coder-next, provider: Qwen, pricing: {input: "0-32k: 1; 32k-128k: 1.5; 128k-256k: 2.5", output: "0-32k: 4; 32k-128k: 6; 128k-256k: 10", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: false, note: "Price exists; no Ctyun model ID"}}}
+  - {id: glm-5.3-flash, provider: Z.AI, providers: {ctyun: {supported: false, note: "No Ctyun model ID"}}}
+  - {id: glm-5.3, provider: Z.AI, pricing: {input: "8", output: "28", cache_hit: "2", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: true, model_id: "e8e2511658054053a7e56e950d80f0e4"}}}
+  - {id: glm-5.2, provider: Z.AI, pricing: {input: "8", output: "28", cache_hit: "2", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: true, model_id: "fc59cc3375d54264b1b6011e46959ca4"}}}
+  - {id: glm-5.1, provider: Z.AI, pricing: {input: "0-32k: 6; 32k-10M: 8", output: "0-32k: 24; 32k-10M: 28", cache_hit: "0-32k: 1.3; 32k-10M: 2", billing: TOKENS, unit: "CNY / 1M tokens", source: ctyun}, providers: {ctyun: {supported: false, note: "Price exists; no Ctyun model ID"}}}

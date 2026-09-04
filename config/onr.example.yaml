@@ -31,6 +31,8 @@ keys:
 models:
   # Model routing file (model -> providers)
   file: "./models.yaml"
+  # Provider-neutral model cards shown in the meter UI.
+  catalog_file: "./config/models.catalog.yaml"
 
 oauth:
   token_persist:
