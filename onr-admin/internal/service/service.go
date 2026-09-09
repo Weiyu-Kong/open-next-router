@@ -274,6 +274,9 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		accountID = strings.TrimSpace(in.SubjectID)
 	}
 	bindings := normalizeProviderKeyBindings(in.ProviderKeyBindings)
+	if bindings == nil {
+		bindings = make(map[string]string)
+	}
 	providers := s.accessKeyProviders(in.AllowedProviders)
 	for _, provider := range providers {
 		if _, exists := bindings[provider]; !exists {
