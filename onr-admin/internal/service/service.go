@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/r9s-ai/open-next-router/onr-core/pkg/keystore"
+	"github.com/r9s-ai/open-next-router/onr-core/pkg/models"
 	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
@@ -86,9 +88,13 @@ type Overview struct {
 }
 
 type Service struct {
-	cfg    *config.Config
-	cp     *controlplane.Client
-	ledger *billing.Ledger
+	cfg           *config.Config
+	cp            *controlplane.Client
+	ledger        *billing.Ledger
+	keyPoolMu     sync.Mutex
+	keyPoolNext   map[string]int
+	keyPoolNames  map[string][]string
+	keyPoolLoaded bool
 }
 
 func New(cfgPath string) (*Service, error) {
@@ -96,7 +102,7 @@ func New(cfgPath string) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Service{cfg: cfg}
+	s := &Service{cfg: cfg, keyPoolNext: map[string]int{}, keyPoolNames: map[string][]string{}}
 	if !cfg.Redis.Enabled {
 		return s, nil
 	}
@@ -157,6 +163,27 @@ func (s *Service) ModelCatalog() (*modelcatalog.Catalog, error) {
 		return nil, fmt.Errorf("configuration is unavailable")
 	}
 	return modelcatalog.Load(s.cfg.Models.CatalogFile)
+}
+
+func (s *Service) ProviderPriority() ([]string, error) {
+	if s == nil || s.cfg == nil {
+		return nil, fmt.Errorf("configuration is unavailable")
+	}
+	f, err := models.LoadFile(s.cfg.Models.File)
+	if err != nil {
+		return nil, err
+	}
+	return append([]string(nil), f.ProviderPriority...), nil
+}
+
+func (s *Service) UpdateProviderPriority(priority []string) error {
+	if s == nil || s.cfg == nil {
+		return fmt.Errorf("configuration is unavailable")
+	}
+	if len(priority) == 0 {
+		return fmt.Errorf("provider priority cannot be empty")
+	}
+	return models.UpdateProviderPriority(s.cfg.Models.File, priority)
 }
 func (s *Service) Client() *controlplane.Client {
 	if s == nil {
@@ -246,6 +273,15 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 	if accountID == "" {
 		accountID = strings.TrimSpace(in.SubjectID)
 	}
+	bindings := normalizeProviderKeyBindings(in.ProviderKeyBindings)
+	providers := s.accessKeyProviders(in.AllowedProviders)
+	for _, provider := range providers {
+		if _, exists := bindings[provider]; !exists {
+			if keyName := s.nextProviderKeyName(provider); keyName != "" {
+				bindings[provider] = keyName
+			}
+		}
+	}
 	rec := controlplane.AccessKeyRecord{
 		Name:             in.Name,
 		SecretHash:       s.cp.HashAccessKey(secret),
@@ -254,10 +290,10 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		SubjectID:        in.SubjectID,
 		AccountID:        accountID,
 		RoutePolicyID:    strings.TrimSpace(in.RoutePolicyID),
-		AllowedProviders: parseCommaList(in.AllowedProviders, true),
+		AllowedProviders: providers,
 		// Access Keys do not impose per-model restrictions.
 		AllowedModels:       nil,
-		ProviderKeyBindings: normalizeProviderKeyBindings(in.ProviderKeyBindings),
+		ProviderKeyBindings: bindings,
 		ExpiresAt:           in.ExpiresAt,
 		Metadata:            in.Metadata,
 		Provisioning:        "pending",
@@ -283,6 +319,42 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		return secret, e
 	}
 	return secret, nil
+}
+
+func (s *Service) accessKeyProviders(raw string) []string {
+	providers := parseCommaList(raw, true)
+	if len(providers) > 0 {
+		return providers
+	}
+	priority, err := s.ProviderPriority()
+	if err != nil {
+		return nil
+	}
+	return priority
+}
+
+func (s *Service) nextProviderKeyName(provider string) string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" || s.cfg == nil {
+		return ""
+	}
+	s.keyPoolMu.Lock()
+	defer s.keyPoolMu.Unlock()
+	if !s.keyPoolLoaded {
+		if ks, err := keystore.Load(strings.TrimSpace(s.cfg.Keys.File)); err == nil {
+			for _, name := range ks.ProviderNames() {
+				s.keyPoolNames[name] = ks.ProviderKeyNames(name)
+			}
+		}
+		s.keyPoolLoaded = true
+	}
+	names := s.keyPoolNames[provider]
+	if len(names) == 0 {
+		return ""
+	}
+	i := s.keyPoolNext[provider] % len(names)
+	s.keyPoolNext[provider] = i + 1
+	return names[i]
 }
 
 func (s *Service) recordLocalProvisioningFailure(ctx context.Context, rec controlplane.AccessKeyRecord, cause error) {

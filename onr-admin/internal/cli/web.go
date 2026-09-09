@@ -33,7 +33,8 @@ Environment variables:
     Default: http://127.0.0.1:3300
 
   ONR_ADMIN_WEB_TOKEN
-    Required Bearer token for all management APIs. The browser keeps it in memory only.
+    Bearer token for all management APIs. Overrides admin.web.token from the config file.
+    The browser keeps it in memory only.
 `),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWebWithOptions(opts)

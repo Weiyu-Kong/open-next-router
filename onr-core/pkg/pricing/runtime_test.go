@@ -114,6 +114,66 @@ entries:
 	}
 }
 
+func TestResolverComputeWildcardPublicPrice(t *testing.T) {
+	dir := t.TempDir()
+	pricePath := filepath.Join(dir, "price.yaml")
+	priceYAML := `
+version: v1
+unit: cny_per_1m_tokens
+entries:
+  - provider: "*"
+    model: glm-5.3
+    cost:
+      input: 8
+      cache_read: 2
+      output: 28
+  - provider: ctyun
+    model: glm-5.3
+    cost:
+      input: 9
+      output: 30
+`
+	if err := os.WriteFile(pricePath, []byte(priceYAML), 0o600); err != nil {
+		t.Fatalf("write price: %v", err)
+	}
+	r, err := LoadResolver(pricePath, "")
+	if err != nil || r == nil {
+		t.Fatalf("LoadResolver: resolver=%v err=%v", r, err)
+	}
+
+	tao, ok := r.Compute("taotoken", "key1", "glm-5.3", map[string]any{
+		"input_tokens": 1000000, "output_tokens": 1000000,
+	})
+	if !ok || tao == nil || math.Abs(tao.TotalCost-36) > 1e-9 {
+		t.Fatalf("TaoToken wildcard cost=%+v ok=%v want=36", tao, ok)
+	}
+	ctyun, ok := r.Compute("ctyun", "key1", "glm-5.3", map[string]any{
+		"input_tokens": 1000000, "output_tokens": 1000000,
+	})
+	if !ok || ctyun == nil || math.Abs(ctyun.TotalCost-39) > 1e-9 {
+		t.Fatalf("Ctyun exact cost=%+v ok=%v want=39", ctyun, ok)
+	}
+}
+
+func TestRepositoryPublicPricesCoverEveryPublicModel(t *testing.T) {
+	r, err := LoadResolver("../../../config/price.public.yaml", "")
+	if err != nil || r == nil {
+		t.Fatalf("LoadResolver: resolver=%v err=%v", r, err)
+	}
+	models := []string{
+		"qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.6-flash",
+		"deepseek-v4-flash", "deepseek-v4-pro", "kimi-k3", "minimax-m3", "glm-5.3", "glm-5.2",
+	}
+	for _, model := range models {
+		for _, provider := range []string{"ctyun", "taotoken"} {
+			cost, ok := r.Compute(provider, "primary", model, map[string]any{"input_tokens": 1})
+			if !ok || cost == nil {
+				t.Fatalf("public price missing: provider=%s model=%s", provider, model)
+			}
+		}
+	}
+}
+
 func TestLoadResolverMissingPriceFile(t *testing.T) {
 	r, err := LoadResolver(filepath.Join(t.TempDir(), "missing.yaml"), "")
 	if err != nil {

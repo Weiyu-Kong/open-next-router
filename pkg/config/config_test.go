@@ -29,6 +29,16 @@ func TestLoadLocalBillingDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadAdminWebToken(t *testing.T) {
+	cfg, err := Load(writeConfigFile(t, "admin:\n  web:\n    token: fixed-admin-token\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Admin.Web.Token != "fixed-admin-token" {
+		t.Fatalf("admin web token=%q", cfg.Admin.Web.Token)
+	}
+}
+
 func TestLocalBillingRequiresRedis(t *testing.T) {
 	_, err := Load(writeConfigFile(t, "billing:\n  enabled: true\n  currency: CNY\n  initial_credit: '10'\n"))
 	if err == nil || !strings.Contains(err.Error(), "billing.enabled=true requires redis.enabled=true") {

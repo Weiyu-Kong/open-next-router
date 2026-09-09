@@ -129,7 +129,7 @@ install -d -o root -g root -m 0750 /var/lib/onr/run/oauth
 cp config/onr.example.yaml /etc/onr/onr.yaml
 cp config/keys.example.yaml /etc/onr/keys.yaml
 cp config/models.example.yaml /etc/onr/models.yaml
-cp config/price.ctyun.yaml /etc/onr/price.ctyun.yaml
+cp config/price.public.yaml /etc/onr/price.public.yaml
 chown root:root /etc/onr/*.yaml
 chmod 0600 /etc/onr/keys.yaml
 ```
@@ -150,7 +150,7 @@ models:
   catalog_file: "/home/open-next-router/config/models.catalog.yaml"
 pricing:
   enabled: true
-  file: "/etc/onr/price.ctyun.yaml"
+  file: "/etc/onr/price.public.yaml"
 billing:
   enabled: true
   currency: "CNY"

@@ -1,4 +1,12 @@
 providers:
+  taotoken:
+    keys:
+      # Add one or more TaoToken API keys. New Access Keys are assigned round-robin.
+      - name: "taotoken-1"
+        value: ""
+      - name: "taotoken-2"
+        value: ""
+
   openai:
     keys:
       - name: "key1"

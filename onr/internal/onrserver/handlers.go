@@ -56,7 +56,8 @@ func makeHandler(cfg *config.Config, st *state, pclient *proxy.Client, api strin
 		// restore body for downstream proxy layer
 		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-		provider, source := selectProvider(st, auth.TokenProvider(c), c.GetHeader("x-onr-provider"), model)
+		principal, _ := auth.PrincipalFromContext(c)
+		provider, source := selectProvider(st, auth.TokenProvider(c), c.GetHeader("x-onr-provider"), model, principal.AllowedProviders)
 		c.Set("onr.provider", provider)
 		c.Set("onr.provider_source", source)
 		c.Set("onr.model", model)
@@ -70,7 +71,6 @@ func makeHandler(cfg *config.Config, st *state, pclient *proxy.Client, api strin
 			)
 			return
 		}
-		principal, _ := auth.PrincipalFromContext(c)
 		if !authorizeAccessKeyRequest(c, requestIDHeaderKey, principal, provider, model) {
 			return
 		}
@@ -211,7 +211,7 @@ func inspectRequestBody(c *gin.Context, api string) ([]byte, bool, string, error
 	return bodyBytes, info.Stream, strings.TrimSpace(info.Model), nil
 }
 
-func selectProvider(st *state, tokenProvider string, headerProvider string, model string) (provider string, source string) {
+func selectProvider(st *state, tokenProvider string, headerProvider string, model string, allowedProviders []string) (provider string, source string) {
 	if p := strings.ToLower(strings.TrimSpace(tokenProvider)); p != "" {
 		return p, "token"
 	}
@@ -220,7 +220,7 @@ func selectProvider(st *state, tokenProvider string, headerProvider string, mode
 	}
 	if m := strings.TrimSpace(model); m != "" {
 		if mr := st.ModelRouter(); mr != nil {
-			if p, ok := mr.NextProvider(m); ok && p != "" {
+			if p, ok := mr.NextProviderAllowed(m, allowedProviders); ok && p != "" {
 				return p, "model"
 			}
 		}

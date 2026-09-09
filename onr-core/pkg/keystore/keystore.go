@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -170,6 +171,42 @@ func (s *Store) KeyByName(provider, name string) (*Key, bool) {
 		}
 	}
 	return nil, false
+}
+
+// ProviderKeyNames returns configured upstream key names for a provider.
+// Values are never exposed; callers can use the names for deterministic routing.
+func (s *Store) ProviderKeyNames(provider string) []string {
+	if s == nil {
+		return nil
+	}
+	p := normalizeProvider(provider)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys := s.byProv[p]
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if name := strings.TrimSpace(key.Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// ProviderNames returns providers with at least one configured upstream key.
+func (s *Store) ProviderNames() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.byProv))
+	for provider, keys := range s.byProv {
+		if len(keys) > 0 {
+			out = append(out, provider)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // NextKey returns the next provider key in round-robin order.

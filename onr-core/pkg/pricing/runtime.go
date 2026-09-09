@@ -151,6 +151,14 @@ func (r *Resolver) Compute(provider, key, model string, usage map[string]any) (*
 	effectiveRates := map[string]float64{}
 	multiplier := 1.0
 
+	// A wildcard entry defines one customer-facing price for a public model,
+	// independent of the selected upstream. An exact provider entry takes
+	// precedence when a provider-specific price is intentionally configured.
+	if models, ok := r.base["*"]; ok {
+		if baseRates, ok := models[model]; ok {
+			effectiveRates = cloneFloatMap(baseRates)
+		}
+	}
 	if models, ok := r.base[provider]; ok {
 		if baseRates, ok := models[model]; ok {
 			effectiveRates = cloneFloatMap(baseRates)

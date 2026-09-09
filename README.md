@@ -560,13 +560,26 @@ curl -sS http://127.0.0.1:3300/v1beta/models/gemini-2.0-flash:generateContent \
 
 ## Model Routing (models.yaml)
 
-You can bind a model to one or more providers. If a model is bound to multiple providers,
-open-next-router selects the provider using round-robin (per model).
+You can bind a public model to one or more providers. `provider_priority` defines
+the global first-available order. ONR skips providers that do not list the model
+and providers that are not allowed by the current Access Key.
+
+```yaml
+provider_priority: [taotoken, ctyun]
+models:
+  glm-5.3: {providers: [ctyun, taotoken]}
+  qwen3.8-max: {providers: [ctyun]}
+```
+
+In this example, `glm-5.3` uses TaoToken first and `qwen3.8-max` goes directly
+to Ctyun. The admin Web UI can reorder the global priority. Reload ONR after
+saving so the runtime reads the updated `models.yaml`.
 
 Selection priority:
 
-1) `x-onr-provider` header (force)
-2) `models.yaml` routing (per model round-robin)
+1) provider embedded in an ONR token (force)
+2) `x-onr-provider` header (force)
+3) `models.yaml` model availability, Access Key allowlist, and global provider priority
 
 ## Traffic Dump (files)
 

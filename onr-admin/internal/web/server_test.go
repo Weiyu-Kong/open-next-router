@@ -70,6 +70,37 @@ provider "openai" {
 }
 `
 
+func TestResolveAdminToken(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "onr.yaml")
+	if err := os.WriteFile(cfgPath, []byte("admin:\n  web:\n    token: config-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("ONR_ADMIN_WEB_TOKEN", "")
+	if got := resolveAdminToken(Options{ConfigPath: cfgPath}); got != "config-token" {
+		t.Fatalf("config token=%q", got)
+	}
+
+	t.Setenv("ONR_ADMIN_WEB_TOKEN", "env-token")
+	if got := resolveAdminToken(Options{ConfigPath: cfgPath}); got != "env-token" {
+		t.Fatalf("environment token=%q", got)
+	}
+
+	if got := resolveAdminToken(Options{ConfigPath: cfgPath, AdminToken: "option-token"}); got != "option-token" {
+		t.Fatalf("option token=%q", got)
+	}
+}
+
+func TestValidateProviderPriority(t *testing.T) {
+	got, err := validateProviderPriority([]string{"taotoken", "ctyun"}, []string{"ctyun", "taotoken"})
+	if err != nil || len(got) != 2 || got[0] != "taotoken" || got[1] != "ctyun" {
+		t.Fatalf("priority=%v err=%v", got, err)
+	}
+	if _, err := validateProviderPriority([]string{"ctyun", "ctyun"}, []string{"ctyun", "taotoken"}); err == nil {
+		t.Fatal("expected duplicate provider error")
+	}
+}
+
 func TestSafeAccessKeyIncludesAccountAndRoutePolicy(t *testing.T) {
 	record := safeAccessKey(controlplane.AccessKeyRecord{
 		Name:             "client-a",
@@ -284,6 +315,11 @@ func TestAdminPortalIncludesAccessKeyRoutingEditor(t *testing.T) {
 	}
 	if strings.Contains(res.Body.String(), "modelPickerHTML(\"newModels\")") || strings.Contains(res.Body.String(), "modelPickerHTML(\"editModels\"") {
 		t.Fatal("access key management must not expose a model restriction picker")
+	}
+	for _, expected := range []string{"providerPickerHTML", "selectedProviderValues", "默认已勾选全部供应商", "/api/admin/provider-priority"} {
+		if !strings.Contains(res.Body.String(), expected) {
+			t.Fatalf("admin script is missing provider priority UI %q", expected)
+		}
 	}
 }
 

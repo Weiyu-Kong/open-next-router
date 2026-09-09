@@ -3,6 +3,7 @@ package models
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -76,6 +77,42 @@ func TestRouter_UnknownStrategyFallback(t *testing.T) {
 	p2, _ := r.NextProvider("x")
 	if p1 != "a" || p2 != "b" {
 		t.Fatalf("unexpected fallback rr order: %q,%q", p1, p2)
+	}
+}
+
+func TestRouterProviderPriorityAndAllowedFallback(t *testing.T) {
+	r := NewRouterWithPriority(map[string]Route{
+		"glm-5.3":     {Providers: []string{"ctyun", "taotoken"}},
+		"qwen3.8-max": {Providers: []string{"ctyun"}},
+	}, []string{"taotoken", "ctyun"})
+	if got, ok := r.NextProvider("glm-5.3"); !ok || got != "taotoken" {
+		t.Fatalf("priority provider=%q ok=%v want taotoken", got, ok)
+	}
+	if got, ok := r.NextProviderAllowed("glm-5.3", []string{"ctyun"}); !ok || got != "ctyun" {
+		t.Fatalf("allowed fallback provider=%q ok=%v want ctyun", got, ok)
+	}
+	if got, ok := r.NextProvider("qwen3.8-max"); !ok || got != "ctyun" {
+		t.Fatalf("model availability provider=%q ok=%v want ctyun", got, ok)
+	}
+}
+
+func TestUpdateProviderPriority(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models.yaml")
+	if err := os.WriteFile(path, []byte("provider_priority: [ctyun, taotoken]\nmodels:\n  glm-5.3: {providers: [ctyun, taotoken]}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateProviderPriority(path, []string{"TaoToken", "ctyun", "taotoken"}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.ProviderPriority(); !reflect.DeepEqual(got, []string{"taotoken", "ctyun"}) {
+		t.Fatalf("priority=%v", got)
+	}
+	if got, ok := r.NextProvider("glm-5.3"); !ok || got != "taotoken" {
+		t.Fatalf("provider=%q ok=%v", got, ok)
 	}
 }
 

@@ -16,11 +16,11 @@ func TestValidateProvidersDir_ConfigProviders(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if !containsLoadedProvider(res.LoadedProviders, "openai") {
-			t.Fatalf("expected openai provider in %q, got %#v", dir, res.LoadedProviders)
+		if !containsLoadedProvider(res.LoadedProviders, "ctyun") {
+			t.Fatalf("expected ctyun provider in %q, got %#v", dir, res.LoadedProviders)
 		}
-		if !containsLoadedProvider(res.LoadedProviders, "anthropic") {
-			t.Fatalf("expected anthropic provider in %q, got %#v", dir, res.LoadedProviders)
+		if !containsLoadedProvider(res.LoadedProviders, "taotoken") {
+			t.Fatalf("expected taotoken provider in %q, got %#v", dir, res.LoadedProviders)
 		}
 		if len(res.Warnings) != 0 {
 			t.Fatalf("expected no warnings for %q, got %#v", dir, res.Warnings)
@@ -58,7 +58,7 @@ func TestCtyunExpectedModelMappingsAreExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"deepseek-v4-pro-0813", "deepseek-v4-flash-0731", "minimax-m3", "kimi-k3", "qwen3.8-max", "qwen3.7-plus", "qwen3.6-flash", "qwen3.6-plus", "glm-5.3", "glm-5.2"}
+	want := []string{"deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "kimi-k3", "qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash", "qwen3.6-plus", "glm-5.3", "glm-5.2"}
 	for _, match := range pf.Request.Matches {
 		if match.API != "chat.completions" {
 			continue

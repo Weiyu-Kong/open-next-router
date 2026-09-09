@@ -109,6 +109,10 @@ type providerResponse struct {
 	Error           string   `json:"error,omitempty"`
 }
 
+type providerPriorityRequest struct {
+	Providers []string `json:"providers"`
+}
+
 type testRequest struct {
 	BaseURL       string `json:"base_url"`
 	Path          string `json:"path"`
@@ -216,10 +220,7 @@ func Run(opts Options) error {
 	providersPath := resolveProviderSourcePath(opts.ConfigPath, opts.ProvidersDir)
 	dumpsDir := resolveDumpsDir(opts.ConfigPath)
 	defaultBaseURL := resolveDefaultAPIBaseURL()
-	token := strings.TrimSpace(opts.AdminToken)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("ONR_ADMIN_WEB_TOKEN"))
-	}
+	token := resolveAdminToken(opts)
 	srv, err := newServerWithOptions(providersPath, dumpsDir, defaultBaseURL, strings.TrimSpace(opts.ConfigPath), token, true)
 	if err != nil {
 		return err
@@ -235,6 +236,19 @@ func Run(opts Options) error {
 		defaultBaseURL,
 	)
 	return http.ListenAndServe(listen, srv.Handler())
+}
+
+func resolveAdminToken(opts Options) string {
+	token := strings.TrimSpace(opts.AdminToken)
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv("ONR_ADMIN_WEB_TOKEN"))
+	}
+	if token == "" && strings.TrimSpace(opts.ConfigPath) != "" {
+		if cfg, cfgErr := cfgpkg.Load(strings.TrimSpace(opts.ConfigPath)); cfgErr == nil {
+			token = strings.TrimSpace(cfg.Admin.Web.Token)
+		}
+	}
+	return token
 }
 
 func NewServer(providersDir string) (*Server, error) {
@@ -306,6 +320,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/admin/access-keys/", s.handleAdminAccessKey)
 	api.HandleFunc("/api/admin/meter/access-keys", s.handleAdminMeterAccessKeys)
 	api.HandleFunc("/api/admin/models", s.handleAdminModels)
+	api.HandleFunc("/api/admin/provider-priority", s.handleAdminProviderPriority)
 	userAPI := http.NewServeMux()
 	userAPI.HandleFunc("/api/user/bridge", s.handleUserBridge)
 	userAPI.HandleFunc("/api/user/login", s.handleUserLogin)
@@ -929,6 +944,94 @@ func (s *Server) handleProviders(w http.ResponseWriter, r *http.Request) {
 		OK:        true,
 		Providers: names,
 	})
+}
+
+func (s *Server) handleAdminProviderPriority(w http.ResponseWriter, r *http.Request) {
+	if s.service == nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "admin service is not configured"})
+		return
+	}
+	available, err := listProviders(s.providerSource)
+	if err != nil {
+		writeJSONAny(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		priority, err := s.service.ProviderPriority()
+		if err != nil {
+			writeJSONAny(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		priority = completeProviderPriority(priority, available)
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "providers": priority, "reload_required": false})
+	case http.MethodPut:
+		var in providerPriorityRequest
+		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil {
+			writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid JSON"})
+			return
+		}
+		priority, err := validateProviderPriority(in.Providers, available)
+		if err != nil {
+			writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		s.mu.Lock()
+		err = s.service.UpdateProviderPriority(priority)
+		s.mu.Unlock()
+		if err != nil {
+			writeJSONAny(w, http.StatusInternalServerError, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "providers": priority, "reload_required": true})
+	default:
+		writeMethodNotAllowed(w, http.MethodGet)
+	}
+}
+
+func completeProviderPriority(priority, available []string) []string {
+	availableSet := make(map[string]struct{}, len(available))
+	for _, provider := range available {
+		availableSet[strings.ToLower(strings.TrimSpace(provider))] = struct{}{}
+	}
+	out := make([]string, 0, len(available))
+	seen := map[string]struct{}{}
+	for _, provider := range append(append([]string(nil), priority...), available...) {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		if _, ok := availableSet[provider]; !ok {
+			continue
+		}
+		if _, ok := seen[provider]; ok {
+			continue
+		}
+		seen[provider] = struct{}{}
+		out = append(out, provider)
+	}
+	return out
+}
+
+func validateProviderPriority(priority, available []string) ([]string, error) {
+	if len(priority) != len(available) {
+		return nil, errors.New("provider priority must contain every configured provider exactly once")
+	}
+	availableSet := make(map[string]struct{}, len(available))
+	for _, provider := range available {
+		availableSet[strings.ToLower(strings.TrimSpace(provider))] = struct{}{}
+	}
+	out := make([]string, 0, len(priority))
+	seen := map[string]struct{}{}
+	for _, provider := range priority {
+		provider = strings.ToLower(strings.TrimSpace(provider))
+		if _, ok := availableSet[provider]; !ok {
+			return nil, errors.New("provider priority contains an unknown provider")
+		}
+		if _, ok := seen[provider]; ok {
+			return nil, errors.New("provider priority contains a duplicate provider")
+		}
+		seen[provider] = struct{}{}
+		out = append(out, provider)
+	}
+	return out, nil
 }
 
 func (s *Server) handleProvider(w http.ResponseWriter, r *http.Request) {

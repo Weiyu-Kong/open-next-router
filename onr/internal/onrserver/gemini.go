@@ -71,7 +71,8 @@ func makeGeminiHandler(cfg *config.Config, st *state, pclient *proxy.Client, req
 		// restore body for downstream proxy layer
 		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
-		provider, source := selectProvider(st, auth.TokenProvider(c), c.GetHeader("x-onr-provider"), model)
+		principal, _ := auth.PrincipalFromContext(c)
+		provider, source := selectProvider(st, auth.TokenProvider(c), c.GetHeader("x-onr-provider"), model, principal.AllowedProviders)
 		c.Set("onr.provider", provider)
 		c.Set("onr.provider_source", source)
 		if provider == "" {
@@ -83,7 +84,6 @@ func makeGeminiHandler(cfg *config.Config, st *state, pclient *proxy.Client, req
 			)
 			return
 		}
-		principal, _ := auth.PrincipalFromContext(c)
 		if !authorizeAccessKeyRequest(c, requestIDHeaderKey, principal, provider, model) {
 			return
 		}

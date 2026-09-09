@@ -127,6 +127,13 @@ type RedisConfig struct {
 }
 
 type Config struct {
+	Admin struct {
+		Web struct {
+			// Token protects the onr-admin web management APIs.
+			Token string `yaml:"token"`
+		} `yaml:"web"`
+	} `yaml:"admin"`
+
 	Server struct {
 		Listen         string `yaml:"listen"`
 		ReadTimeoutMs  int    `yaml:"read_timeout_ms"`
