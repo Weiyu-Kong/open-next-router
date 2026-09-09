@@ -8,8 +8,9 @@ auth:
 
 server:
   listen: ":3300"
-  read_timeout_ms: 60000
-  write_timeout_ms: 60000
+  # Allow slow/complex upstream generations to finish.
+  read_timeout_ms: 600000
+  write_timeout_ms: 600000
   # PID file for `onr -s reload` (SIGHUP).
   pid_file: "/var/run/onr.pid"
 
