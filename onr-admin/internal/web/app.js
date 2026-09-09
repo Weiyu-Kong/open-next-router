@@ -645,11 +645,23 @@ async function refreshProviders() {
     return;
   }
   providerSelect.innerHTML = "";
-  for (const p of data.providers || []) {
+  const providers = data.providers || [];
+  const cards = document.getElementById("providerCards");
+  if (cards) cards.innerHTML = "";
+  const count = document.getElementById("providerCount");
+  if (count) count.textContent = `${providers.length} 个`;
+  for (const p of providers) {
     const opt = document.createElement("option");
     opt.value = p;
     opt.textContent = p;
     providerSelect.appendChild(opt);
+    if (cards) {
+      const card = document.createElement("article");
+      card.className = "provider-card";
+      card.innerHTML = `<div><span class="provider-status"></span><strong>${escapeText(p)}</strong></div><small>DSL 配置已发现</small><button class="ghost provider-card-action" type="button">管理配置</button>`;
+      card.querySelector("button").onclick = () => { providerInput.value = p; providerSelect.value = p; loadProvider(); };
+      cards.appendChild(card);
+    }
   }
   if ((data.providers || []).length > 0 && !providerInput.value) {
     providerInput.value = data.providers[0];
