@@ -28,6 +28,13 @@ func TestAccessKeyProvidersDefaultToGlobalPriority(t *testing.T) {
 	}
 }
 
+func TestBatchCreateAccessKeysRejectsOversizedCount(t *testing.T) {
+	results := (&Service{}).BatchCreateAccessKeys(context.Background(), BatchCreateAccessKeyInput{Count: 0})
+	if len(results) != 1 || results[0].Error == "" {
+		t.Fatalf("unexpected result: %#v", results)
+	}
+}
+
 func TestCreateAccessKeyAssignsProviderKeyWhenBindingsAreEmpty(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	cp, err := controlplane.New(controlplane.Config{

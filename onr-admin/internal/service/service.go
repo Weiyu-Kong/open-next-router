@@ -40,6 +40,26 @@ type WalletAdjustmentInput struct {
 	IdempotencyKey string
 }
 
+type BatchCreateAccessKeyInput struct {
+	Prefix            string
+	Count             int
+	SubjectType      string
+	AllowedProviders string
+	ExpiresAt        *time.Time
+}
+
+type BatchCreateAccessKeyResult struct {
+	Name   string `json:"name"`
+	Secret string `json:"secret,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type BatchOperationResult struct {
+	Name  string `json:"name"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
 type UserUsageQuery struct {
 	BucketSize string
 	Timezone   string
@@ -229,6 +249,16 @@ func (s *Service) UpdateAccessKeyRouting(ctx context.Context, name string, in Up
 	}
 	providers := parseCommaList(in.AllowedProviders, true)
 	bindings := normalizeProviderKeyBindings(in.ProviderKeyBindings)
+	if bindings == nil {
+		bindings = make(map[string]string)
+	}
+	for _, provider := range providers {
+		if _, exists := bindings[provider]; !exists {
+			if keyName := s.nextProviderKeyName(provider); keyName != "" {
+				bindings[provider] = keyName
+			}
+		}
+	}
 	if len(providers) > 0 {
 		allowed := make(map[string]struct{}, len(providers))
 		for _, provider := range providers {
@@ -487,6 +517,98 @@ func (s *Service) RevokeAccessKey(ctx context.Context, name string) error {
 		return fmt.Errorf("redis access-key management is disabled")
 	}
 	return s.cp.RevokeAccessKey(ctx, name)
+}
+
+// BatchRevokeAccessKeys soft-deletes keys by marking them revoked. Redis data
+// and immutable billing records are intentionally retained.
+func (s *Service) BatchRevokeAccessKeys(ctx context.Context, names []string) []BatchOperationResult {
+	results := make([]BatchOperationResult, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		err := s.RevokeAccessKey(ctx, name)
+		result := BatchOperationResult{Name: name, OK: err == nil}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+// BatchUpdateAccessKeyRouting applies one provider selection to each key and
+// uses optimistic versions supplied by Redis, so concurrent edits are safe.
+func (s *Service) BatchUpdateAccessKeyRouting(ctx context.Context, names []string, allowedProviders string) []BatchOperationResult {
+	results := make([]BatchOperationResult, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		result := BatchOperationResult{Name: name}
+		record, err := s.GetAccessKey(ctx, name)
+		if err == nil && record == nil {
+			err = fmt.Errorf("access key not found")
+		}
+		if err == nil {
+			_, err = s.UpdateAccessKeyRouting(ctx, name, UpdateAccessKeyRoutingInput{AllowedProviders: allowedProviders, ExpectedVersion: record.Version})
+		}
+		result.OK = err == nil
+		if err != nil {
+			result.Error = err.Error()
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+// BatchAdjustAccessKeyBalance adjusts each account with a distinct idempotency
+// key derived from the caller's prefix and the key name.
+func (s *Service) BatchAdjustAccessKeyBalance(ctx context.Context, names []string, operation string, in WalletAdjustmentInput, idempotencyPrefix string) []BatchOperationResult {
+	results := make([]BatchOperationResult, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		adjustment := in
+		adjustment.IdempotencyKey = strings.TrimSpace(idempotencyPrefix) + ":" + name
+		result := BatchOperationResult{Name: name}
+		_, err := s.AdjustAccessKeyBalance(ctx, name, operation, adjustment)
+		result.OK = err == nil
+		if err != nil {
+			result.Error = err.Error()
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+func (s *Service) BatchCreateAccessKeys(ctx context.Context, in BatchCreateAccessKeyInput) []BatchCreateAccessKeyResult {
+	count := in.Count
+	if count < 1 {
+		return []BatchCreateAccessKeyResult{{Error: "count must be positive"}}
+	}
+	if count > 100 {
+		count = 100
+	}
+	prefix := strings.TrimSpace(in.Prefix)
+	if prefix == "" {
+		prefix = "batch-key"
+	}
+	results := make([]BatchCreateAccessKeyResult, 0, count)
+	for i := 1; i <= count; i++ {
+		name := fmt.Sprintf("%s-%03d", prefix, i)
+		secret, err := s.CreateAccessKey(ctx, CreateAccessKeyInput{Name: name, SubjectType: in.SubjectType, SubjectID: name, AllowedProviders: in.AllowedProviders, ExpiresAt: in.ExpiresAt})
+		result := BatchCreateAccessKeyResult{Name: name, Secret: secret}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		results = append(results, result)
+	}
+	return results
 }
 
 func (s *Service) AdjustAccessKeyBalance(ctx context.Context, name, operation string, in WalletAdjustmentInput) (billing.LedgerEntry, error) {

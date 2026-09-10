@@ -315,6 +315,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("/api/dumps/by-request-id", s.handleDumpByRequestID)
 	api.HandleFunc("/api/admin/overview", s.handleAdminOverview)
 	api.HandleFunc("/api/admin/access-keys", s.handleAdminAccessKeys)
+	api.HandleFunc("/api/admin/access-keys/batch", s.handleAdminAccessKeysBatch)
 	api.HandleFunc("/api/admin/access-keys/migrate/dry-run", s.handleAdminMigrate)
 	api.HandleFunc("/api/admin/access-keys/migrate", s.handleAdminMigrate)
 	api.HandleFunc("/api/admin/access-keys/", s.handleAdminAccessKey)
@@ -1469,6 +1470,57 @@ func (s *Server) handleAdminAccessKeys(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusOK, adminAccessKeyResponse{OK: true, Secret: secret})
 	default:
 		writeMethodNotAllowed(w, http.MethodGet)
+	}
+}
+
+func (s *Server) handleAdminAccessKeysBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if s.service == nil {
+		writeJSONAny(w, http.StatusServiceUnavailable, adminAccessKeyResponse{Error: "admin service is not configured"})
+		return
+	}
+	var in struct {
+		Action           string   `json:"action"`
+		Names            []string `json:"names"`
+		Providers        string   `json:"allowed_providers"`
+		Prefix           string   `json:"prefix"`
+		Count            int      `json:"count"`
+		Amount           string   `json:"amount"`
+		Currency         string   `json:"currency"`
+		IdempotencyPrefix string  `json:"idempotency_prefix"`
+		SubjectType      string   `json:"subject_type"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in); err != nil {
+		writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: "invalid JSON"})
+		return
+	}
+	action := strings.ToLower(strings.TrimSpace(in.Action))
+	switch action {
+	case "revoke":
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "results": s.service.BatchRevokeAccessKeys(r.Context(), in.Names)})
+	case "route", "providers":
+		if strings.TrimSpace(in.Providers) == "" {
+			writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: "allowed_providers is required"})
+			return
+		}
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "results": s.service.BatchUpdateAccessKeyRouting(r.Context(), in.Names, in.Providers)})
+	case "credit", "debit":
+		if strings.TrimSpace(in.Amount) == "" || strings.TrimSpace(in.IdempotencyPrefix) == "" {
+			writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: "amount and idempotency_prefix are required"})
+			return
+		}
+		results := s.service.BatchAdjustAccessKeyBalance(r.Context(), in.Names, action, adminservice.WalletAdjustmentInput{Amount: in.Amount, Currency: in.Currency}, in.IdempotencyPrefix)
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "results": results})
+	case "create":
+		if in.SubjectType == "" {
+			in.SubjectType = "api_key"
+		}
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "results": s.service.BatchCreateAccessKeys(r.Context(), adminservice.BatchCreateAccessKeyInput{Prefix: in.Prefix, Count: in.Count, SubjectType: in.SubjectType, AllowedProviders: in.Providers})})
+	default:
+		writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: "action must be create, revoke, route, credit, or debit"})
 	}
 }
 
