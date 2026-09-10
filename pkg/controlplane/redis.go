@@ -890,14 +890,19 @@ func (c *Client) ReadLocalBillingEvents(ctx context.Context, accountID string, s
 	var ids []string
 	err := c.withTimeout(ctx, func(ctx context.Context) error {
 		var err error
-		ids, err = c.rdb.ZRangeByScore(ctx, c.localBillingKey("events", accountID), &redis.ZRangeBy{Min: fmt.Sprint(start), Max: fmt.Sprint(end), Offset: 0, Count: int64(limit)}).Result()
+		// Read the newest events first so a busy account's request history is not
+		// permanently truncated by the oldest records when the caller applies a
+		// bounded limit. Reverse the result below to preserve the historical
+		// ascending order expected by usage aggregation and the web UI.
+		ids, err = c.rdb.ZRevRangeByScore(ctx, c.localBillingKey("events", accountID), &redis.ZRangeBy{Max: fmt.Sprint(end), Min: fmt.Sprint(start), Offset: 0, Count: int64(limit)}).Result()
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]LocalBillingEvent, 0, len(ids))
-	for _, id := range ids {
+	for i := len(ids) - 1; i >= 0; i-- {
+		id := ids[i]
 		var raw string
 		err := c.withTimeout(ctx, func(ctx context.Context) error {
 			var err error
