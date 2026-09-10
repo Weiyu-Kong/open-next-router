@@ -593,7 +593,9 @@ func (s *Server) handleUserUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	groupBy := []string{"bucket", "model"}
-	response, err := s.service.QueryAccessKeyUsage(r.Context(), record, adminservice.UserUsageQuery{BucketSize: bucket, Timezone: window.Timezone, StartTime: window.Start, EndTime: window.End, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: groupBy, Measures: []string{"quantity", "amount"}, Limit: 1000})
+	// Usage is aggregated over the complete selected window. A bounded event
+	// query here would silently undercount busy accounts.
+	response, err := s.service.QueryAccessKeyUsage(r.Context(), record, adminservice.UserUsageQuery{BucketSize: bucket, Timezone: window.Timezone, StartTime: window.Start, EndTime: window.End, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: groupBy, Measures: []string{"quantity", "amount"}, Limit: 0})
 	if err != nil {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "usage service unavailable"})
 		return
@@ -616,7 +618,9 @@ func (s *Server) handleUserRequests(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	events, err := s.service.QueryAccessKeyEvents(r.Context(), record, window.Start, window.End, 100)
+	// The Tabulator table paginates the complete result locally; do not discard
+	// older requests at the API boundary.
+	events, err := s.service.QueryAccessKeyEvents(r.Context(), record, window.Start, window.End, 0)
 	if err != nil {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "request history unavailable"})
 		return
@@ -648,7 +652,7 @@ func (s *Server) handleUserBills(w http.ResponseWriter, r *http.Request) {
 		writeJSONAny(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	bills, err := s.service.QueryAccessKeyBills(r.Context(), record, window.Start, window.End, window.Timezone, 100)
+	bills, err := s.service.QueryAccessKeyBills(r.Context(), record, window.Start, window.End, window.Timezone, 0)
 	if err != nil {
 		writeJSONAny(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "billing history unavailable"})
 		return
