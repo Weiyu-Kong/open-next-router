@@ -41,8 +41,8 @@ type WalletAdjustmentInput struct {
 }
 
 type BatchCreateAccessKeyInput struct {
-	Prefix            string
-	Count             int
+	Prefix           string
+	Count            int
 	SubjectType      string
 	AllowedProviders string
 	ExpiresAt        *time.Time
@@ -676,13 +676,13 @@ func (s *Service) QueryAccessKeyUsage(ctx context.Context, rec controlplane.Acce
 
 func (s *Service) QueryAccessKeyEvents(ctx context.Context, rec controlplane.AccessKeyRecord, startTime, endTime int64, limit int) (*billing.EventsResponse, error) {
 	if s.ledger != nil && s.ledger.Enabled() {
-		events, err := s.ledger.ReadEvents(ctx, rec.AccountID, time.Unix(startTime, 0), time.Unix(endTime, 0), limit)
+		events, err := s.localEvents(ctx, rec, startTime, endTime, limit)
 		if err != nil {
 			return nil, err
 		}
 		rows := make([]billing.EventRecord, 0, len(events))
 		for _, event := range events {
-			metrics := map[string]any{"input_tokens": event.InputTokens, "output_tokens": event.OutputTokens, "cached_tokens": event.CachedTokens, "total_tokens": event.TotalTokens, "amount": decimal.New(event.AmountMicros, -6).StringFixed(6), "currency": event.Currency}
+			metrics := map[string]any{"input_tokens": event.InputTokens, "output_tokens": event.OutputTokens, "cached_tokens": event.CachedTokens, "total_tokens": eventTotalTokens(event), "amount": decimal.New(event.AmountMicros, -6).StringFixed(6), "currency": event.Currency}
 			rows = append(rows, billing.EventRecord{OccurredAt: event.OccurredAt, ExternalEventID: event.RequestID, Labels: map[string]string{"model": event.Model}, Metrics: metrics})
 		}
 		return &billing.EventsResponse{UsageEvents: rows}, nil
@@ -715,7 +715,34 @@ func localBucket(ts int64, size, timezone string) string {
 }
 
 func (s *Service) localEvents(ctx context.Context, rec controlplane.AccessKeyRecord, start, end int64, limit int) ([]controlplane.LocalBillingEvent, error) {
-	return s.ledger.ReadEvents(ctx, rec.AccountID, time.Unix(start, 0), time.Unix(end, 0), limit)
+	// Read the complete account window before filtering. Applying the limit in
+	// Redis first can both omit this key's events and include another key's
+	// events when multiple keys share an account.
+	events, err := s.ledger.ReadEvents(ctx, rec.AccountID, time.Unix(start, 0), time.Unix(end, 0), 0)
+	if err != nil {
+		return nil, err
+	}
+	return filterAccessKeyEvents(events, rec.Name, limit), nil
+}
+
+func filterAccessKeyEvents(events []controlplane.LocalBillingEvent, accessKeyID string, limit int) []controlplane.LocalBillingEvent {
+	filtered := make([]controlplane.LocalBillingEvent, 0, len(events))
+	for _, event := range events {
+		if event.AccessKeyID == accessKeyID {
+			filtered = append(filtered, event)
+		}
+	}
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[len(filtered)-limit:]
+	}
+	return filtered
+}
+
+func eventTotalTokens(event controlplane.LocalBillingEvent) int64 {
+	if event.TotalTokens > 0 {
+		return event.TotalTokens
+	}
+	return event.InputTokens + event.OutputTokens
 }
 
 func (s *Service) queryLocalUsage(ctx context.Context, rec controlplane.AccessKeyRecord, in UserUsageQuery) (*billing.UsageResponse, error) {
@@ -723,7 +750,7 @@ func (s *Service) queryLocalUsage(ctx context.Context, rec controlplane.AccessKe
 	if err != nil {
 		return nil, err
 	}
-	type aggregate struct{ input, output, cached, amount, count int64 }
+	type aggregate struct{ input, output, cached, total, amount, count int64 }
 	groups := map[string]*aggregate{}
 	for _, event := range events {
 		key := localBucket(event.OccurredAt, in.BucketSize, in.Timezone) + "\x00" + event.Model
@@ -734,6 +761,7 @@ func (s *Service) queryLocalUsage(ctx context.Context, rec controlplane.AccessKe
 		g.input += event.InputTokens
 		g.output += event.OutputTokens
 		g.cached += event.CachedTokens
+		g.total += eventTotalTokens(event)
 		g.amount += event.AmountMicros
 		g.count++
 	}
@@ -741,7 +769,7 @@ func (s *Service) queryLocalUsage(ctx context.Context, rec controlplane.AccessKe
 	for key, g := range groups {
 		parts := strings.SplitN(key, "\x00", 2)
 		rows = append(rows, billing.UsageRow{Dimensions: map[string]string{"bucket": parts[0], "model": parts[1]}, Measures: map[string]any{
-			"prompt_tokens": g.input, "completion_tokens": g.output, "cached_tokens": g.cached, "quantity": g.input + g.output + g.cached, "amount": decimal.New(g.amount, -6).StringFixed(6), "usage_event_count": g.count,
+			"prompt_tokens": g.input, "completion_tokens": g.output, "cached_tokens": g.cached, "quantity": g.total, "amount": decimal.New(g.amount, -6).StringFixed(6), "usage_event_count": g.count,
 		}})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -758,7 +786,7 @@ func (s *Service) queryLocalBills(ctx context.Context, rec controlplane.AccessKe
 	if err != nil {
 		return nil, err
 	}
-	type aggregate struct{ input, output, cached, amount, count int64 }
+	type aggregate struct{ input, output, cached, total, amount, count int64 }
 	groups := map[string]*aggregate{}
 	for _, event := range events {
 		if groups[event.Model] == nil {
@@ -768,12 +796,13 @@ func (s *Service) queryLocalBills(ctx context.Context, rec controlplane.AccessKe
 		g.input += event.InputTokens
 		g.output += event.OutputTokens
 		g.cached += event.CachedTokens
+		g.total += eventTotalTokens(event)
 		g.amount += event.AmountMicros
 		g.count++
 	}
 	rows := make([]billing.BillRow, 0, len(groups))
 	for model, g := range groups {
-		rows = append(rows, billing.BillRow{Dimensions: map[string]string{"model": model}, RequestCount: g.count, Amount: decimal.New(g.amount, -6).StringFixed(6), Metrics: map[string]billing.BillMetric{"prompt_tokens": {Quantity: g.input}, "completion_tokens": {Quantity: g.output}, "cached_tokens": {Quantity: g.cached}}})
+		rows = append(rows, billing.BillRow{Dimensions: map[string]string{"model": model}, RequestCount: g.count, Amount: decimal.New(g.amount, -6).StringFixed(6), Metrics: map[string]billing.BillMetric{"prompt_tokens": {Quantity: g.input}, "completion_tokens": {Quantity: g.output}, "cached_tokens": {Quantity: g.cached}, "total_tokens": {Quantity: g.total}}})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Dimensions["model"] < rows[j].Dimensions["model"] })
 	return &billing.BillsResponse{Rows: rows}, nil
@@ -817,13 +846,13 @@ func (s *Service) ListAccessKeyMeterSummaries(ctx context.Context, startTime, en
 		// Provider and internal key are routing dimensions, not customer billing
 		// identities. Keep administrator summaries aligned with the user view so
 		// manual provider changes do not split one model's history.
-		usage, usageErr := s.QueryAccessKeyUsage(ctx, rec, UserUsageQuery{StartTime: startTime, EndTime: endTime, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: []string{"model"}, Measures: []string{"quantity", "usage_event_count"}, Limit: 1000})
+		usage, usageErr := s.QueryAccessKeyUsage(ctx, rec, UserUsageQuery{StartTime: startTime, EndTime: endTime, Metrics: []string{"prompt_tokens", "completion_tokens", "cached_tokens"}, GroupBy: []string{"model"}, Measures: []string{"quantity", "usage_event_count"}, Limit: 0})
 		if usageErr != nil {
 			row.Error = "usage unavailable"
 		} else {
 			row.Usage = usage.Rows
 		}
-		bills, billErr := s.QueryAccessKeyBills(ctx, rec, startTime, endTime, "UTC", 1000)
+		bills, billErr := s.QueryAccessKeyBills(ctx, rec, startTime, endTime, "UTC", 0)
 		if billErr != nil {
 			if row.Error == "" {
 				row.Error = "billing unavailable"

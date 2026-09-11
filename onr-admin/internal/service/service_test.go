@@ -78,3 +78,37 @@ func TestCreateAccessKeyAssignsProviderKeyWhenBindingsAreEmpty(t *testing.T) {
 		t.Fatalf("ctyun binding=%q want primary", got)
 	}
 }
+
+func TestEventTotalTokensDoesNotDoubleCountCachedTokens(t *testing.T) {
+	event := controlplane.LocalBillingEvent{
+		InputTokens:  100,
+		OutputTokens: 20,
+		CachedTokens: 80,
+		TotalTokens:  120,
+	}
+	if got := eventTotalTokens(event); got != 120 {
+		t.Fatalf("total tokens=%d want 120", got)
+	}
+	event.TotalTokens = 0
+	if got := eventTotalTokens(event); got != 120 {
+		t.Fatalf("fallback total tokens=%d want 120", got)
+	}
+}
+
+func TestFilterAccessKeyEventsFiltersBeforeApplyingLimit(t *testing.T) {
+	events := []controlplane.LocalBillingEvent{
+		{RequestID: "a-1", AccessKeyID: "key-a"},
+		{RequestID: "b-1", AccessKeyID: "key-b"},
+		{RequestID: "a-2", AccessKeyID: "key-a"},
+		{RequestID: "b-2", AccessKeyID: "key-b"},
+		{RequestID: "a-3", AccessKeyID: "key-a"},
+	}
+	got := filterAccessKeyEvents(events, "key-a", 2)
+	if len(got) != 2 || got[0].RequestID != "a-2" || got[1].RequestID != "a-3" {
+		t.Fatalf("events=%+v want latest two events for key-a", got)
+	}
+	all := filterAccessKeyEvents(events, "key-a", 0)
+	if len(all) != 3 {
+		t.Fatalf("unlimited events=%d want 3", len(all))
+	}
+}
