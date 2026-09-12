@@ -3,6 +3,7 @@ package onrserver
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -68,9 +69,28 @@ func enforceBillingBalance(cfg *config.Config, sink *billing.Ledger, c *gin.Cont
 	if cfg == nil || sink == nil || c == nil || !sink.Enabled() || !cfg.Billing.Enabled {
 		return true
 	}
-	// Local billing is post-response accounting. It deliberately does not
-	// reserve an estimate or hard-stop low balances; concurrent requests may
-	// overspend slightly and the ledger records the actual final amount.
+	principal, ok := auth.PrincipalFromContext(c)
+	if !ok {
+		// The deployment master key has no local billing principal.
+		return true
+	}
+	accountID := strings.TrimSpace(principal.AccountID)
+	if accountID == "" {
+		accountID = strings.TrimSpace(principal.AccessKeyID)
+	}
+	if accountID == "" {
+		writeOpenAIErrorWithStatus(c, requestIDHeaderKey, http.StatusServiceUnavailable, "billing_error", "billing_account_missing", "billing account is unavailable")
+		return false
+	}
+	account, err := sink.ReadAccount(requestContext(c), accountID)
+	if err != nil {
+		writeOpenAIErrorWithStatus(c, requestIDHeaderKey, http.StatusServiceUnavailable, "billing_error", "billing_unavailable", "billing balance is unavailable")
+		return false
+	}
+	if account.BalanceMicros <= 0 {
+		writeOpenAIErrorWithStatus(c, requestIDHeaderKey, http.StatusPaymentRequired, "billing_error", "insufficient_balance", "access key balance is exhausted")
+		return false
+	}
 	return true
 }
 
