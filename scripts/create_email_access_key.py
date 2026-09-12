@@ -26,12 +26,15 @@ def key_name(email: str) -> str:
     return f"whitelist-{(local or 'user')[:32]}-{digest}"
 
 
-def atomic_append(path: Path, email: str, secret: str) -> None:
+def atomic_append(path: Path, email: str, secret: str, replace_existing: bool = False) -> None:
     exported = load_json(path) if path.exists() else {}
-    if email in exported:
+    if email in exported and not replace_existing:
         raise RuntimeError(f"{email} already exists in {path}")
     if any(not isinstance(key, str) or not isinstance(value, str) for key, value in exported.items()):
         raise ValueError(f"{path} must be an email-to-access-key JSON object")
+    # Reinsert replacements at the end as well, while never retaining the
+    # revoked secret in the export.
+    exported.pop(email, None)
     exported[email] = secret
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -83,8 +86,7 @@ def main() -> int:
     if "://" not in base_url:
         base_url = "https://" + base_url
     exported = load_json(args.output) if args.output.exists() else {}
-    if email in exported:
-        raise RuntimeError(f"{email} already exists in {args.output}; no changes made")
+    replacing_export = email in exported
 
     name = key_name(email)
     print(
@@ -97,12 +99,38 @@ def main() -> int:
 
     api = AdminAPI(base_url, token, args.timeout)
     records_response = api.request("GET", "/api/admin/access-keys")
-    records = records_response.get("records") or []
-    if any(isinstance(record, dict) and record.get("name") == name for record in records):
+    records = [record for record in (records_response.get("records") or []) if isinstance(record, dict)]
+    email_records = []
+    for record in records:
+        metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+        record_email = str(metadata.get("email") or "").strip().lower()
+        if not record_email and str(record.get("subject_type") or "").strip().lower() == "email":
+            record_email = str(record.get("subject_id") or "").strip().lower()
+        if record_email == email:
+            email_records.append(record)
+
+    active_records = [record for record in email_records if record.get("status") == "active"]
+    if active_records:
         raise RuntimeError(
-            "the deterministic access-key name already exists on the server, but its secret "
-            "is not present in the export; refusing to rotate or overwrite it"
+            "an active access key already exists for this email; refusing to create a duplicate"
         )
+    if replacing_export and not email_records:
+        raise RuntimeError(
+            "the email exists in the export, but no matching revoked server record was found; "
+            "refusing to replace it"
+        )
+    if replacing_export and any(record.get("status") != "revoked" for record in email_records):
+        raise RuntimeError(
+            "the existing email record is not fully revoked; refusing to replace its exported key"
+        )
+
+    existing_names = {str(record.get("name") or "").strip() for record in records}
+    if name in existing_names:
+        revision = 1
+        while f"{name}-r{revision:02d}" in existing_names:
+            revision += 1
+        name = f"{name}-r{revision:02d}"
+        print("A revoked key exists for this email; creating a new revision.")
 
     response = api.request(
         "POST",
@@ -123,7 +151,7 @@ def main() -> int:
         raise RuntimeError(f"access-key creation failed: {response.get('error', 'secret missing')}")
 
     # Persist the only copy of the returned secret before any later API call.
-    atomic_append(args.output, email, secret)
+    atomic_append(args.output, email, secret, replace_existing=replacing_export)
     encoded_name = urllib.parse.quote(name, safe="")
     meter = api.request("GET", f"/api/admin/access-keys/{encoded_name}/meter")
     balance_data = meter.get("balance") or {}
