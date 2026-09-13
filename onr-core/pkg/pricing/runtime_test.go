@@ -160,15 +160,35 @@ func TestRepositoryPublicPricesCoverEveryPublicModel(t *testing.T) {
 	if err != nil || r == nil {
 		t.Fatalf("LoadResolver: resolver=%v err=%v", r, err)
 	}
-	models := []string{
-		"qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.6-flash",
-		"deepseek-v4-flash", "deepseek-v4-pro", "kimi-k3", "minimax-m3", "glm-5.3", "glm-5.2",
+	type rates struct{ input, cacheRead, output float64 }
+	models := map[string]rates{
+		"qwen3.8-max":                  {12, 1.5, 36},
+		"qwen3.7-max":                  {12, 2.4, 36},
+		"qwen3.7-plus":                 {2, 0.4, 8},
+		"qwen3.6-plus":                 {2, 2, 12},
+		"qwen3.6-flash":                {1.2, 1.2, 7.2},
+		"deepseek-v4-flash":            {3, 0.1, 9},
+		"deepseek-v4-flash-vision-exp": {1, 0.02, 4},
+		"deepseek-v4-pro":              {9, 0.3, 27},
+		"kimi-k3":                      {20, 2, 100},
+		"minimax-m3":                   {2.1, 0.42, 8.4},
+		"glm-5.3":                      {8, 2, 28},
+		"glm-5.3-flash":                {0.8, 0.23, 2.8},
+		"glm-5.2":                      {8, 2, 28},
 	}
-	for _, model := range models {
+	for model, want := range models {
 		for _, provider := range []string{"ctyun", "taotoken"} {
-			cost, ok := r.Compute(provider, "primary", model, map[string]any{"input_tokens": 1})
+			cost, ok := r.Compute(provider, "primary", model, map[string]any{
+				"input_tokens": 2_000_000, "cache_read_tokens": 1_000_000, "output_tokens": 1_000_000,
+			})
 			if !ok || cost == nil {
 				t.Fatalf("public price missing: provider=%s model=%s", provider, model)
+			}
+			if cost.InputRate != want.input || cost.CacheReadRate != want.cacheRead || cost.OutputRate != want.output {
+				t.Fatalf("public rates provider=%s model=%s got input=%v cache=%v output=%v want=%+v", provider, model, cost.InputRate, cost.CacheReadRate, cost.OutputRate, want)
+			}
+			if expected := want.input + want.cacheRead + want.output; math.Abs(cost.TotalCost-expected) > 1e-9 {
+				t.Fatalf("public cost provider=%s model=%s got=%v want=%v", provider, model, cost.TotalCost, expected)
 			}
 		}
 	}

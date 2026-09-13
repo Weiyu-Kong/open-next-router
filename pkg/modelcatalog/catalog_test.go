@@ -45,7 +45,7 @@ func TestLoadCatalog(t *testing.T) {
 func TestRepositoryCatalogMatchesSelectableModels(t *testing.T) {
 	want := []string{
 		"qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.6-flash",
-		"deepseek-v4-flash", "deepseek-v4-pro", "kimi-k3", "minimax-m3", "glm-5.3", "glm-5.2",
+		"deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro", "kimi-k3", "minimax-m3", "glm-5.3", "glm-5.3-flash", "glm-5.2",
 	}
 	sort.Strings(want)
 	catalog, err := Load(filepath.Join("..", "..", "config", "models.catalog.yaml"))
@@ -72,7 +72,7 @@ func TestRepositoryCatalogMatchesSelectableModels(t *testing.T) {
 			t.Fatalf("model %q is missing from selectable routes", model.ID)
 		}
 		wantProviders := []string{"ctyun"}
-		if model.ID == "deepseek-v4-flash" || model.ID == "glm-5.3" {
+		if model.ID == "deepseek-v4-flash" || model.ID == "deepseek-v4-flash-vision-exp" || model.ID == "deepseek-v4-pro" || model.ID == "glm-5.3" || model.ID == "glm-5.3-flash" {
 			wantProviders = []string{"taotoken", "ctyun"}
 		}
 		if !reflect.DeepEqual(route.Providers, wantProviders) {
@@ -84,17 +84,19 @@ func TestRepositoryCatalogMatchesSelectableModels(t *testing.T) {
 func TestRepositoryCatalogMatchesPublicPrices(t *testing.T) {
 	type price struct{ input, output, cache string }
 	want := map[string]price{
-		"qwen3.8-max":       {"12", "36", "1.5"},
-		"qwen3.7-max":       {"12", "36", "2.4"},
-		"qwen3.7-plus":      {"2", "8", "0.4"},
-		"qwen3.6-plus":      {"2", "12", ""},
-		"qwen3.6-flash":     {"1.2", "7.2", ""},
-		"deepseek-v4-flash": {"3", "9", "0.1"},
-		"deepseek-v4-pro":   {"9", "27", "0.3"},
-		"kimi-k3":           {"20", "100", "2"},
-		"minimax-m3":        {"2.1", "8.4", "0.42"},
-		"glm-5.3":           {"8", "28", "2"},
-		"glm-5.2":           {"8", "28", "2"},
+		"qwen3.8-max":                  {"12", "36", "1.5"},
+		"qwen3.7-max":                  {"12", "36", "2.4"},
+		"qwen3.7-plus":                 {"2", "8", "0.4"},
+		"qwen3.6-plus":                 {"2", "12", ""},
+		"qwen3.6-flash":                {"1.2", "7.2", ""},
+		"deepseek-v4-flash":            {"3", "9", "0.1"},
+		"deepseek-v4-flash-vision-exp": {"1", "4", "0.02"},
+		"deepseek-v4-pro":              {"9", "27", "0.3"},
+		"kimi-k3":                      {"20", "100", "2"},
+		"minimax-m3":                   {"2.1", "8.4", "0.42"},
+		"glm-5.3":                      {"8", "28", "2"},
+		"glm-5.3-flash":                {"0.8", "2.8", "0.23"},
+		"glm-5.2":                      {"8", "28", "2"},
 	}
 	catalog, err := Load(filepath.Join("..", "..", "config", "models.catalog.yaml"))
 	if err != nil {
@@ -117,17 +119,19 @@ func TestRepositoryCatalogMatchesPublicPrices(t *testing.T) {
 
 func TestRepositoryCtyunMappingsMatchProviderDSL(t *testing.T) {
 	want := map[string]string{
-		"qwen3.8-max":       "3bbfba16dd6e4fed90af61eee76db87f",
-		"qwen3.7-max":       "547f9804945c492a9d536bcbff15fb1a",
-		"qwen3.7-plus":      "98df9efe26894003be658e1e70ff0105",
-		"qwen3.6-plus":      "3fd7b6be3bea4f66adc276af23b5c52b",
-		"qwen3.6-flash":     "c7aca8b6434e4a448e9e3ace7815b74f",
-		"deepseek-v4-flash": "c60c9aec5710499dafae8e4f395698d8",
-		"deepseek-v4-pro":   "20e81bd57e7a4be281e5d0ef0afc93d8",
-		"kimi-k3":           "76ab208968e0414b927a9a6a97dfc3e1",
-		"minimax-m3":        "62cc400ee35e43808b1688fcbc9c3e88",
-		"glm-5.3":           "e8e2511658054053a7e56e950d80f0e4",
-		"glm-5.2":           "fc59cc3375d54264b1b6011e46959ca4",
+		"qwen3.8-max":                  "3bbfba16dd6e4fed90af61eee76db87f",
+		"qwen3.7-max":                  "547f9804945c492a9d536bcbff15fb1a",
+		"qwen3.7-plus":                 "98df9efe26894003be658e1e70ff0105",
+		"qwen3.6-plus":                 "3fd7b6be3bea4f66adc276af23b5c52b",
+		"qwen3.6-flash":                "c7aca8b6434e4a448e9e3ace7815b74f",
+		"deepseek-v4-flash":            "c60c9aec5710499dafae8e4f395698d8",
+		"deepseek-v4-flash-vision-exp": "1423e1bea98a4428a07ca878621f7a94",
+		"deepseek-v4-pro":              "20e81bd57e7a4be281e5d0ef0afc93d8",
+		"kimi-k3":                      "76ab208968e0414b927a9a6a97dfc3e1",
+		"minimax-m3":                   "62cc400ee35e43808b1688fcbc9c3e88",
+		"glm-5.3":                      "e8e2511658054053a7e56e950d80f0e4",
+		"glm-5.3-flash":                "7fc9eb568f4f4e90ad20ef67d5a1cd3f",
+		"glm-5.2":                      "fc59cc3375d54264b1b6011e46959ca4",
 	}
 	catalog, err := Load(filepath.Join("..", "..", "config", "models.catalog.yaml"))
 	if err != nil {
@@ -167,8 +171,8 @@ func TestRepositoryTaoTokenMappingsMatchProviderDSL(t *testing.T) {
 	want := map[string]string{
 		"qwen3.8-max": "None", "qwen3.7-max": "None", "qwen3.7-plus": "None",
 		"qwen3.6-plus": "None", "qwen3.6-flash": "None",
-		"deepseek-v4-flash": "deepseek-v4-flash", "deepseek-v4-pro": "None",
-		"kimi-k3": "None", "minimax-m3": "None", "glm-5.3": "glm-5.3-flash", "glm-5.2": "None",
+		"deepseek-v4-flash": "deepseek-v4-flash", "deepseek-v4-flash-vision-exp": "deepseek-v4-flash-vision-exp", "deepseek-v4-pro": "deepseek-v4-pro",
+		"kimi-k3": "None", "minimax-m3": "None", "glm-5.3": "glm-5.3", "glm-5.3-flash": "glm-5.3-flash", "glm-5.2": "None",
 	}
 	catalog, err := Load(filepath.Join("..", "..", "config", "models.catalog.yaml"))
 	if err != nil {

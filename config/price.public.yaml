@@ -16,8 +16,10 @@ entries:
   - {provider: "*", model: qwen3.6-plus, cost: {input: 2, output: 12}}
   - {provider: "*", model: qwen3.6-flash, cost: {input: 1.2, output: 7.2}}
   - {provider: "*", model: deepseek-v4-flash, cost: {input: 3, cache_read: 0.1, output: 9}}
+  - {provider: "*", model: deepseek-v4-flash-vision-exp, cost: {input: 1, cache_read: 0.02, output: 4}}
   - {provider: "*", model: deepseek-v4-pro, cost: {input: 9, cache_read: 0.3, output: 27}}
   - {provider: "*", model: kimi-k3, cost: {input: 20, cache_read: 2, output: 100}}
   - {provider: "*", model: minimax-m3, cost: {input: 2.1, cache_read: 0.42, output: 8.4}}
   - {provider: "*", model: glm-5.3, cost: {input: 8, cache_read: 2, output: 28}}
+  - {provider: "*", model: glm-5.3-flash, cost: {input: 0.8, cache_read: 0.23, output: 2.8}}
   - {provider: "*", model: glm-5.2, cost: {input: 8, cache_read: 2, output: 28}}

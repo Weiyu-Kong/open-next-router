@@ -58,7 +58,7 @@ func TestCtyunExpectedModelMappingsAreExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"deepseek-v4-pro", "deepseek-v4-flash", "minimax-m3", "kimi-k3", "qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash", "qwen3.6-plus", "glm-5.3", "glm-5.2"}
+	want := []string{"deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "minimax-m3", "kimi-k3", "qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash", "qwen3.6-plus", "glm-5.3", "glm-5.3-flash", "glm-5.2"}
 	for _, match := range pf.Request.Matches {
 		if match.API != "chat.completions" {
 			continue
