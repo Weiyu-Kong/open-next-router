@@ -72,7 +72,7 @@ func TestRepositoryCatalogMatchesSelectableModels(t *testing.T) {
 			t.Fatalf("model %q is missing from selectable routes", model.ID)
 		}
 		wantProviders := []string{"ctyun"}
-		if model.ID == "deepseek-v4-flash" || model.ID == "deepseek-v4-flash-vision-exp" || model.ID == "deepseek-v4-pro" || model.ID == "glm-5.3" || model.ID == "glm-5.3-flash" {
+		if model.ID == "qwen3.7-max" || model.ID == "deepseek-v4-flash" || model.ID == "deepseek-v4-flash-vision-exp" || model.ID == "deepseek-v4-pro" || model.ID == "kimi-k3" || model.ID == "minimax-m3" || model.ID == "glm-5.3" || model.ID == "glm-5.3-flash" || model.ID == "glm-5.2" {
 			wantProviders = []string{"taotoken", "ctyun"}
 		}
 		if !reflect.DeepEqual(route.Providers, wantProviders) {
@@ -169,10 +169,10 @@ func TestRepositoryCtyunMappingsMatchProviderDSL(t *testing.T) {
 
 func TestRepositoryTaoTokenMappingsMatchProviderDSL(t *testing.T) {
 	want := map[string]string{
-		"qwen3.8-max": "None", "qwen3.7-max": "None", "qwen3.7-plus": "None",
+		"qwen3.8-max": "None", "qwen3.7-max": "qwen3.7-max", "qwen3.7-plus": "None",
 		"qwen3.6-plus": "None", "qwen3.6-flash": "None",
 		"deepseek-v4-flash": "deepseek-v4-flash", "deepseek-v4-flash-vision-exp": "deepseek-v4-flash-vision-exp", "deepseek-v4-pro": "deepseek-v4-pro",
-		"kimi-k3": "None", "minimax-m3": "None", "glm-5.3": "glm-5.3", "glm-5.3-flash": "glm-5.3-flash", "glm-5.2": "None",
+		"kimi-k3": "kimi-k3", "minimax-m3": "minimax-m3", "glm-5.3": "glm-5.3", "glm-5.3-flash": "glm-5.3-flash", "glm-5.2": "glm-5.2",
 	}
 	catalog, err := Load(filepath.Join("..", "..", "config", "models.catalog.yaml"))
 	if err != nil {

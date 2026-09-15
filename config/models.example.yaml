@@ -3,15 +3,15 @@
 provider_priority: [taotoken, ctyun]
 models:
   qwen3.8-max: {providers: [ctyun]}
-  qwen3.7-max: {providers: [ctyun]}
+  qwen3.7-max: {providers: [taotoken, ctyun]}
   qwen3.7-plus: {providers: [ctyun]}
   qwen3.6-plus: {providers: [ctyun]}
   qwen3.6-flash: {providers: [ctyun]}
   deepseek-v4-flash: {providers: [ctyun, taotoken]}
   deepseek-v4-flash-vision-exp: {providers: [ctyun, taotoken]}
   deepseek-v4-pro: {providers: [ctyun, taotoken]}
-  kimi-k3: {providers: [ctyun]}
-  minimax-m3: {providers: [ctyun]}
+  kimi-k3: {providers: [taotoken, ctyun]}
+  minimax-m3: {providers: [taotoken, ctyun]}
   glm-5.3: {providers: [ctyun, taotoken]}
   glm-5.3-flash: {providers: [ctyun, taotoken]}
-  glm-5.2: {providers: [ctyun]}
+  glm-5.2: {providers: [taotoken, ctyun]}
