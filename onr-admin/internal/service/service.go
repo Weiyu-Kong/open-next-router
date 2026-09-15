@@ -55,9 +55,10 @@ type BatchCreateAccessKeyResult struct {
 }
 
 type BatchOperationResult struct {
-	Name  string `json:"name"`
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
+	Name    string `json:"name"`
+	OK      bool   `json:"ok"`
+	Skipped bool   `json:"skipped,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 type UserUsageQuery struct {
@@ -566,7 +567,7 @@ func (s *Service) BatchUpdateAccessKeyRouting(ctx context.Context, names []strin
 
 // BatchAdjustAccessKeyBalance adjusts each account with a distinct idempotency
 // key derived from the caller's prefix and the key name.
-func (s *Service) BatchAdjustAccessKeyBalance(ctx context.Context, names []string, operation string, in WalletAdjustmentInput, idempotencyPrefix string) []BatchOperationResult {
+func (s *Service) BatchAdjustAccessKeyBalance(ctx context.Context, names []string, operation string, in WalletAdjustmentInput, idempotencyPrefix, threshold string) []BatchOperationResult {
 	results := make([]BatchOperationResult, 0, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
@@ -576,7 +577,17 @@ func (s *Service) BatchAdjustAccessKeyBalance(ctx context.Context, names []strin
 		adjustment := in
 		adjustment.IdempotencyKey = strings.TrimSpace(idempotencyPrefix) + ":" + name
 		result := BatchOperationResult{Name: name}
-		_, err := s.AdjustAccessKeyBalance(ctx, name, operation, adjustment)
+		var err error
+		if strings.TrimSpace(threshold) != "" {
+			if !strings.EqualFold(strings.TrimSpace(operation), "credit") {
+				err = fmt.Errorf("threshold is only supported for credit")
+			} else {
+				result.Skipped, err = s.creditAccessKeyBalanceBelow(ctx, name, adjustment, threshold)
+				result.Skipped = !result.Skipped
+			}
+		} else {
+			_, err = s.AdjustAccessKeyBalance(ctx, name, operation, adjustment)
+		}
 		result.OK = err == nil
 		if err != nil {
 			result.Error = err.Error()
@@ -584,6 +595,20 @@ func (s *Service) BatchAdjustAccessKeyBalance(ctx context.Context, names []strin
 		results = append(results, result)
 	}
 	return results
+}
+
+func (s *Service) creditAccessKeyBalanceBelow(ctx context.Context, name string, in WalletAdjustmentInput, threshold string) (bool, error) {
+	if s.ledger == nil || !s.ledger.Enabled() {
+		return false, fmt.Errorf("local billing is disabled")
+	}
+	rec, err := s.cp.GetAccessKeyRecord(ctx, strings.TrimSpace(name))
+	if err != nil {
+		return false, err
+	}
+	if rec == nil {
+		return false, fmt.Errorf("access key not found")
+	}
+	return s.ledger.CreditBelow(ctx, rec.AccountID, in.IdempotencyKey, in.Amount, threshold)
 }
 
 func (s *Service) BatchCreateAccessKeys(ctx context.Context, in BatchCreateAccessKeyInput) []BatchCreateAccessKeyResult {

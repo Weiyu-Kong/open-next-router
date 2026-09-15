@@ -1494,6 +1494,7 @@ func (s *Server) handleAdminAccessKeysBatch(w http.ResponseWriter, r *http.Reque
 		Count            int      `json:"count"`
 		Amount           string   `json:"amount"`
 		Currency         string   `json:"currency"`
+		Threshold        string   `json:"threshold"`
 		IdempotencyPrefix string  `json:"idempotency_prefix"`
 		SubjectType      string   `json:"subject_type"`
 	}
@@ -1516,7 +1517,7 @@ func (s *Server) handleAdminAccessKeysBatch(w http.ResponseWriter, r *http.Reque
 			writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: "amount and idempotency_prefix are required"})
 			return
 		}
-		results := s.service.BatchAdjustAccessKeyBalance(r.Context(), in.Names, action, adminservice.WalletAdjustmentInput{Amount: in.Amount, Currency: in.Currency}, in.IdempotencyPrefix)
+		results := s.service.BatchAdjustAccessKeyBalance(r.Context(), in.Names, action, adminservice.WalletAdjustmentInput{Amount: in.Amount, Currency: in.Currency}, in.IdempotencyPrefix, in.Threshold)
 		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "results": results})
 	case "create":
 		if in.SubjectType == "" {

@@ -165,3 +165,17 @@ func (l *Ledger) Adjust(ctx context.Context, accountID, idempotencyKey, amount s
 	}
 	return l.controlPlane.AdjustLocalBillingAccount(ctx, accountID, idempotencyKey, micros, l.Currency())
 }
+
+// CreditBelow applies a positive credit only when the account balance is
+// strictly below threshold. It returns whether a credit was applied.
+func (l *Ledger) CreditBelow(ctx context.Context, accountID, idempotencyKey, amount, threshold string) (bool, error) {
+	creditMicros, err := amountMicros(amount)
+	if err != nil || creditMicros == 0 {
+		return false, errors.New("amount must be a positive decimal")
+	}
+	thresholdMicros, err := amountMicros(threshold)
+	if err != nil {
+		return false, errors.New("threshold must be a non-negative decimal")
+	}
+	return l.controlPlane.CreditLocalBillingAccountBelow(ctx, accountID, idempotencyKey, creditMicros, thresholdMicros, l.Currency())
+}
