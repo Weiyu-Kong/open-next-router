@@ -1,6 +1,6 @@
 # Provider-neutral selectable models. Provider-specific model IDs live in
 # config/providers/*.conf; a model is routable only when a provider is listed.
-provider_priority: [taotoken, ctyun]
+provider_priority: [kimi, taotoken, ctyun]
 models:
   qwen3.8-max: {providers: [ctyun]}
   qwen3.7-max: {providers: [taotoken, ctyun]}
@@ -10,7 +10,10 @@ models:
   deepseek-v4-flash: {providers: [ctyun, taotoken]}
   deepseek-v4-flash-vision-exp: {providers: [ctyun, taotoken]}
   deepseek-v4-pro: {providers: [ctyun, taotoken]}
-  kimi-k3: {providers: [taotoken, ctyun]}
+  kimi-k3: {providers: [kimi, taotoken, ctyun]}
+  kimi-k2.7-code: {providers: [kimi]}
+  kimi-k2.7-code-highspeed: {providers: [kimi]}
+  kimi-k2.6: {providers: [kimi]}
   minimax-m3: {providers: [taotoken, ctyun]}
   glm-5.3: {providers: [ctyun, taotoken]}
   glm-5.3-flash: {providers: [ctyun, taotoken]}

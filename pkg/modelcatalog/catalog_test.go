@@ -45,7 +45,7 @@ func TestLoadCatalog(t *testing.T) {
 func TestRepositoryCatalogMatchesSelectableModels(t *testing.T) {
 	want := []string{
 		"qwen3.8-max", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus", "qwen3.6-flash",
-		"deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro", "kimi-k3", "minimax-m3", "glm-5.3", "glm-5.3-flash", "glm-5.2",
+		"deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro", "kimi-k3", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6", "minimax-m3", "glm-5.3", "glm-5.3-flash", "glm-5.2",
 	}
 	sort.Strings(want)
 	catalog, err := Load(filepath.Join("..", "..", "config", "models.catalog.yaml"))
@@ -72,8 +72,14 @@ func TestRepositoryCatalogMatchesSelectableModels(t *testing.T) {
 			t.Fatalf("model %q is missing from selectable routes", model.ID)
 		}
 		wantProviders := []string{"ctyun"}
-		if model.ID == "qwen3.7-max" || model.ID == "deepseek-v4-flash" || model.ID == "deepseek-v4-flash-vision-exp" || model.ID == "deepseek-v4-pro" || model.ID == "kimi-k3" || model.ID == "minimax-m3" || model.ID == "glm-5.3" || model.ID == "glm-5.3-flash" || model.ID == "glm-5.2" {
+		if model.ID == "qwen3.7-max" || model.ID == "deepseek-v4-flash" || model.ID == "deepseek-v4-flash-vision-exp" || model.ID == "deepseek-v4-pro" || model.ID == "minimax-m3" || model.ID == "glm-5.3" || model.ID == "glm-5.3-flash" || model.ID == "glm-5.2" {
 			wantProviders = []string{"taotoken", "ctyun"}
+		}
+		if model.ID == "kimi-k3" {
+			wantProviders = []string{"kimi", "taotoken", "ctyun"}
+		}
+		if model.ID == "kimi-k2.7-code" || model.ID == "kimi-k2.7-code-highspeed" || model.ID == "kimi-k2.6" {
+			wantProviders = []string{"kimi"}
 		}
 		if !reflect.DeepEqual(route.Providers, wantProviders) {
 			t.Fatalf("model %q providers=%v want=%v", model.ID, route.Providers, wantProviders)
@@ -93,6 +99,9 @@ func TestRepositoryCatalogMatchesPublicPrices(t *testing.T) {
 		"deepseek-v4-flash-vision-exp": {"1", "4", "0.02"},
 		"deepseek-v4-pro":              {"9", "27", "0.3"},
 		"kimi-k3":                      {"20", "100", "2"},
+		"kimi-k2.7-code":               {"6.5", "27", "1.3"},
+		"kimi-k2.7-code-highspeed":     {"13", "54", "2.6"},
+		"kimi-k2.6":                    {"6.5", "27", "1.1"},
 		"minimax-m3":                   {"2.1", "8.4", "0.42"},
 		"glm-5.3":                      {"8", "28", "2"},
 		"glm-5.3-flash":                {"0.8", "2.8", "0.23"},
@@ -206,5 +215,46 @@ func TestRepositoryTaoTokenMappingsMatchProviderDSL(t *testing.T) {
 	}
 	if matched != 4 {
 		t.Fatalf("TaoToken matches=%d want 4", matched)
+	}
+}
+
+func TestRepositoryKimiMappingsMatchProviderDSL(t *testing.T) {
+	want := map[string]string{
+		"kimi-k3":                  "kimi-k3",
+		"kimi-k2.7-code":           "kimi-k2.7-code",
+		"kimi-k2.7-code-highspeed": "kimi-k2.7-code-highspeed",
+		"kimi-k2.6":                "kimi-k2.6",
+	}
+	catalog, err := Load(filepath.Join("..", "..", "config", "models.catalog.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range catalog.Models() {
+		mapping, present := model.Providers["kimi"]
+		expected, supported := want[model.ID]
+		if present != supported || mapping.Supported != supported || mapping.ModelID != expected {
+			t.Fatalf("model %q Kimi mapping=%+v present=%v want supported=%v id=%q", model.ID, mapping, present, supported, expected)
+		}
+	}
+
+	provider, err := dslconfig.ValidateProviderFile(filepath.Join("..", "..", "config", "providers", "kimi.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched := 0
+	for _, match := range provider.Request.Matches {
+		if match.API != "chat.completions" {
+			continue
+		}
+		matched++
+		for publicID, upstreamID := range want {
+			got := strings.Trim(match.Transform.ModelMap.Map[publicID], `"`)
+			if got != upstreamID {
+				t.Fatalf("stream=%v model_map %q=%q want %q", match.Stream, publicID, got, upstreamID)
+			}
+		}
+	}
+	if matched != 2 {
+		t.Fatalf("Kimi chat matches=%d want 2", matched)
 	}
 }

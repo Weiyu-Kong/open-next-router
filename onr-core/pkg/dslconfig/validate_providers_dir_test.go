@@ -22,6 +22,9 @@ func TestValidateProvidersDir_ConfigProviders(t *testing.T) {
 		if !containsLoadedProvider(res.LoadedProviders, "taotoken") {
 			t.Fatalf("expected taotoken provider in %q, got %#v", dir, res.LoadedProviders)
 		}
+		if !containsLoadedProvider(res.LoadedProviders, "kimi") {
+			t.Fatalf("expected kimi provider in %q, got %#v", dir, res.LoadedProviders)
+		}
 		if len(res.Warnings) != 0 {
 			t.Fatalf("expected no warnings for %q, got %#v", dir, res.Warnings)
 		}

@@ -1,4 +1,10 @@
 providers:
+  kimi:
+    keys:
+      # Fill this value with a Moonshot API key or use ONR_UPSTREAM_KEY_KIMI_KIMI_1.
+      - name: "kimi-1"
+        value: ""
+
   taotoken:
     keys:
       # Add one or more TaoToken API keys. New Access Keys are assigned round-robin.

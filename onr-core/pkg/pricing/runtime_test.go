@@ -171,13 +171,16 @@ func TestRepositoryPublicPricesCoverEveryPublicModel(t *testing.T) {
 		"deepseek-v4-flash-vision-exp": {1, 0.02, 4},
 		"deepseek-v4-pro":              {9, 0.3, 27},
 		"kimi-k3":                      {20, 2, 100},
+		"kimi-k2.7-code":               {6.5, 1.3, 27},
+		"kimi-k2.7-code-highspeed":     {13, 2.6, 54},
+		"kimi-k2.6":                    {6.5, 1.1, 27},
 		"minimax-m3":                   {2.1, 0.42, 8.4},
 		"glm-5.3":                      {8, 2, 28},
 		"glm-5.3-flash":                {0.8, 0.23, 2.8},
 		"glm-5.2":                      {8, 2, 28},
 	}
 	for model, want := range models {
-		for _, provider := range []string{"ctyun", "taotoken"} {
+		for _, provider := range []string{"ctyun", "taotoken", "kimi"} {
 			cost, ok := r.Compute(provider, "primary", model, map[string]any{
 				"input_tokens": 2_000_000, "cache_read_tokens": 1_000_000, "output_tokens": 1_000_000,
 			})
