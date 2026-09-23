@@ -98,10 +98,17 @@ func formatMicros(value int64) string {
 }
 
 func (l *Ledger) ProvisionAccount(ctx context.Context, accountID string) error {
+	return l.ProvisionAccountWithCredit(ctx, accountID, l.cfg.InitialCredit)
+}
+
+// ProvisionAccountWithCredit initializes an account with a caller-selected
+// credit. The account-scoped idempotency key makes retries safe and prevents a
+// repeated access-key provisioning request from granting the credit twice.
+func (l *Ledger) ProvisionAccountWithCredit(ctx context.Context, accountID, initialCredit string) error {
 	if !l.Enabled() {
 		return nil
 	}
-	credit, err := amountMicros(l.cfg.InitialCredit)
+	credit, err := amountMicros(initialCredit)
 	if err != nil {
 		return err
 	}

@@ -54,6 +54,24 @@ func TestLedgerProvisionRecordAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestProvisionAccountWithCreditOverridesDefaultOnce(t *testing.T) {
+	l := newTestLedger(t)
+	ctx := context.Background()
+	if err := l.ProvisionAccountWithCredit(ctx, "account-custom", "500"); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.ProvisionAccountWithCredit(ctx, "account-custom", "900"); err != nil {
+		t.Fatal(err)
+	}
+	account, err := l.ReadAccount(ctx, "account-custom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account.Credit != "500.000000" || account.Balance != "500.000000" {
+		t.Fatalf("account=%+v", account)
+	}
+}
+
 func TestLedgerReadEventsReturnsNewestWithinLimit(t *testing.T) {
 	l := newTestLedger(t)
 	ctx := context.Background()
@@ -62,12 +80,12 @@ func TestLedgerReadEventsReturnsNewestWithinLimit(t *testing.T) {
 	}
 	for i := 1; i <= 3; i++ {
 		event := UsageEvent{
-			RequestID:  fmt.Sprintf("req-%d", i),
-			AccountID:  "account-b",
-			Model:      "glm-5.3",
+			RequestID:   fmt.Sprintf("req-%d", i),
+			AccountID:   "account-b",
+			Model:       "glm-5.3",
 			TotalTokens: int64(i),
-			Amount:     "0.001",
-			OccurredAt: time.Unix(int64(i), 0),
+			Amount:      "0.001",
+			OccurredAt:  time.Unix(int64(i), 0),
 		}
 		if err := l.Record(ctx, event); err != nil {
 			t.Fatal(err)

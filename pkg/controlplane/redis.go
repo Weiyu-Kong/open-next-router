@@ -44,22 +44,24 @@ type Client struct {
 }
 
 type AccessKeyRecord struct {
-	Name                string            `json:"name"`
-	SecretHash          string            `json:"secret_hash"`
-	Status              string            `json:"status"`
-	SubjectType         string            `json:"subject_type"`
-	SubjectID           string            `json:"subject_id"`
-	AccountID           string            `json:"account_id,omitempty"`
-	Provisioning        string            `json:"provisioning,omitempty"`
-	ProvisioningError   string            `json:"provisioning_error,omitempty"`
-	RoutePolicyID       string            `json:"route_policy_id,omitempty"`
-	AllowedProviders    []string          `json:"allowed_providers,omitempty"`
-	AllowedModels       []string          `json:"allowed_models,omitempty"`
-	ProviderKeyBindings map[string]string `json:"provider_key_bindings,omitempty"`
-	CreatedAt           time.Time         `json:"created_at"`
-	ExpiresAt           *time.Time        `json:"expires_at,omitempty"`
-	Version             int64             `json:"version"`
-	Metadata            map[string]string `json:"metadata,omitempty"`
+	Name                 string            `json:"name"`
+	SecretHash           string            `json:"secret_hash"`
+	Status               string            `json:"status"`
+	SubjectType          string            `json:"subject_type"`
+	SubjectID            string            `json:"subject_id"`
+	AccountID            string            `json:"account_id,omitempty"`
+	Provisioning         string            `json:"provisioning,omitempty"`
+	ProvisioningError    string            `json:"provisioning_error,omitempty"`
+	BillingInitialCredit string            `json:"billing_initial_credit,omitempty"`
+	BillingCurrency      string            `json:"billing_currency,omitempty"`
+	RoutePolicyID        string            `json:"route_policy_id,omitempty"`
+	AllowedProviders     []string          `json:"allowed_providers,omitempty"`
+	AllowedModels        []string          `json:"allowed_models,omitempty"`
+	ProviderKeyBindings  map[string]string `json:"provider_key_bindings,omitempty"`
+	CreatedAt            time.Time         `json:"created_at"`
+	ExpiresAt            *time.Time        `json:"expires_at,omitempty"`
+	Version              int64             `json:"version"`
+	Metadata             map[string]string `json:"metadata,omitempty"`
 }
 
 var ErrAccessKeyVersionConflict = errors.New("access key version conflict")

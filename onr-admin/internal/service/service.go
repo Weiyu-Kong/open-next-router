@@ -21,6 +21,7 @@ type CreateAccessKeyInput struct {
 	Name, SubjectType, SubjectID    string
 	AccountID, RoutePolicyID        string
 	AllowedProviders, AllowedModels string
+	InitialCredit, Currency         string
 	ProviderKeyBindings             map[string]string
 	ExpiresAt                       *time.Time
 	Metadata                        map[string]string
@@ -91,6 +92,13 @@ type AccessKeyMeterSummary struct {
 	Error       string                   `json:"error,omitempty"`
 }
 
+type AccessKeySettlement struct {
+	AccessKeyID          string          `json:"access_key_id"`
+	Status               string          `json:"status"`
+	Account              billing.Account `json:"account"`
+	PendingBillingEvents int64           `json:"pending_billing_events"`
+}
+
 type MigrationReport struct {
 	Total, WouldMigrate, Migrated int
 	Conflicts, Skipped            []string
@@ -159,7 +167,11 @@ func (s *Service) initializeExistingLocalAccounts(ctx context.Context) error {
 		if strings.TrimSpace(record.AccountID) == "" {
 			continue
 		}
-		if err := s.ledger.ProvisionAccount(ctx, record.AccountID); err != nil {
+		initialCredit := strings.TrimSpace(record.BillingInitialCredit)
+		if initialCredit == "" {
+			initialCredit = s.cfg.Billing.InitialCredit
+		}
+		if err := s.ledger.ProvisionAccountWithCredit(ctx, record.AccountID, initialCredit); err != nil {
 			return err
 		}
 	}
@@ -295,6 +307,21 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 	if s.cp == nil {
 		return "", fmt.Errorf("redis access-key management is disabled")
 	}
+	initialCredit := strings.TrimSpace(in.InitialCredit)
+	currency := strings.ToUpper(strings.TrimSpace(in.Currency))
+	if initialCredit != "" {
+		if s.ledger == nil || !s.ledger.Enabled() {
+			return "", fmt.Errorf("initial_credit requires local billing")
+		}
+		amount, err := decimal.NewFromString(initialCredit)
+		scaled := amount.Mul(decimal.NewFromInt(1_000_000))
+		if err != nil || amount.IsNegative() || !scaled.Equal(decimal.NewFromInt(scaled.IntPart())) {
+			return "", fmt.Errorf("initial_credit must be a non-negative decimal with at most 6 decimal places")
+		}
+	}
+	if currency != "" && (s.ledger == nil || currency != strings.ToUpper(s.ledger.Currency())) {
+		return "", fmt.Errorf("currency %q does not match billing currency %q", currency, s.BillingCurrency())
+	}
 	secret, e := controlplane.NewAccessKeySecret()
 	if e != nil {
 		return "", e
@@ -325,17 +352,22 @@ func (s *Service) CreateAccessKey(ctx context.Context, in CreateAccessKeyInput) 
 		RoutePolicyID:    strings.TrimSpace(in.RoutePolicyID),
 		AllowedProviders: providers,
 		// Access Keys do not impose per-model restrictions.
-		AllowedModels:       nil,
-		ProviderKeyBindings: bindings,
-		ExpiresAt:           in.ExpiresAt,
-		Metadata:            in.Metadata,
-		Provisioning:        "pending",
+		AllowedModels:        nil,
+		ProviderKeyBindings:  bindings,
+		ExpiresAt:            in.ExpiresAt,
+		Metadata:             in.Metadata,
+		Provisioning:         "pending",
+		BillingInitialCredit: initialCredit,
+		BillingCurrency:      currency,
 	}
 	if e = s.cp.CreateAccessKey(ctx, rec); e != nil {
 		return "", e
 	}
 	if s.ledger != nil && s.ledger.Enabled() {
-		if e = s.ledger.ProvisionAccount(ctx, accountID); e != nil {
+		if initialCredit == "" {
+			initialCredit = s.cfg.Billing.InitialCredit
+		}
+		if e = s.ledger.ProvisionAccountWithCredit(ctx, accountID, initialCredit); e != nil {
 			s.recordLocalProvisioningFailure(ctx, rec, e)
 			return secret, e
 		}
@@ -503,7 +535,11 @@ func (s *Service) ProvisionAccessKey(ctx context.Context, name string) error {
 		return fmt.Errorf("access key provisioning status is %q", rec.Provisioning)
 	}
 	if s.ledger != nil && s.ledger.Enabled() {
-		if err := s.ledger.ProvisionAccount(ctx, rec.AccountID); err != nil {
+		initialCredit := strings.TrimSpace(rec.BillingInitialCredit)
+		if initialCredit == "" {
+			initialCredit = s.cfg.Billing.InitialCredit
+		}
+		if err := s.ledger.ProvisionAccountWithCredit(ctx, rec.AccountID, initialCredit); err != nil {
 			return err
 		}
 		rec.Status, rec.Provisioning, rec.ProvisioningError = "active", "ready", ""
@@ -668,6 +704,26 @@ func (s *Service) ReadAccessKeyLimits(ctx context.Context, rec controlplane.Acce
 		return nil, err
 	}
 	return &billing.LimitsSnapshot{AccountID: account.AccountID, SubjectType: rec.SubjectType, SubjectID: rec.SubjectID, Currency: account.Currency}, nil
+}
+
+func (s *Service) ReadAccessKeySettlement(ctx context.Context, rec controlplane.AccessKeyRecord) (*AccessKeySettlement, error) {
+	if s.ledger == nil || !s.ledger.Enabled() {
+		return nil, fmt.Errorf("local billing is disabled")
+	}
+	account, err := s.ledger.ReadAccount(ctx, rec.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	pending, err := s.BillingPendingForAccessKey(ctx, rec.Name)
+	if err != nil {
+		return nil, err
+	}
+	return &AccessKeySettlement{
+		AccessKeyID:          rec.Name,
+		Status:               rec.Status,
+		Account:              account,
+		PendingBillingEvents: pending,
+	}, nil
 }
 
 func (s *Service) QueryAccessKeyUsage(ctx context.Context, rec controlplane.AccessKeyRecord, in UserUsageQuery) (*billing.UsageResponse, error) {

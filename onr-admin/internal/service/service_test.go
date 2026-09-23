@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/r9s-ai/open-next-router/pkg/billing"
 	"github.com/r9s-ai/open-next-router/pkg/config"
 	"github.com/r9s-ai/open-next-router/pkg/controlplane"
 )
@@ -25,6 +26,50 @@ func TestAccessKeyProvidersDefaultToGlobalPriority(t *testing.T) {
 	}
 	if got := s.accessKeyProviders("ctyun"); !reflect.DeepEqual(got, []string{"ctyun"}) {
 		t.Fatalf("explicit providers=%v", got)
+	}
+}
+
+func TestCreateAccessKeyUsesRequestedInitialCredit(t *testing.T) {
+	redisServer := miniredis.RunT(t)
+	cp, err := controlplane.New(controlplane.Config{
+		Addr: "redis://" + redisServer.Addr(), KeyPrefix: "custom-credit", AccessKeyHashSecret: "secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cp.Close() })
+	ledger, err := billing.New(cp, billing.Config{Enabled: true, Currency: "CNY", InitialCredit: "10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Billing.Enabled = true
+	cfg.Billing.Currency = "CNY"
+	cfg.Billing.InitialCredit = "10"
+	s := &Service{cfg: cfg, cp: cp, ledger: ledger, keyPoolNext: map[string]int{}, keyPoolNames: map[string][]string{}}
+	if _, err := s.CreateAccessKey(context.Background(), CreateAccessKeyInput{
+		Name: "run-key", SubjectType: "api_key", SubjectID: "run-key", AccountID: "run-account",
+		InitialCredit: "500.00", Currency: "CNY",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	account, err := ledger.ReadAccount(context.Background(), "run-account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if account.Credit != "500.000000" || account.Balance != "500.000000" {
+		t.Fatalf("account=%+v", account)
+	}
+	record, err := s.GetAccessKey(context.Background(), "run-key")
+	if err != nil || record == nil {
+		t.Fatalf("record=%+v err=%v", record, err)
+	}
+	settlement, err := s.ReadAccessKeySettlement(context.Background(), *record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settlement.AccessKeyID != "run-key" || settlement.Account.Spent != "0.000000" || settlement.PendingBillingEvents != 0 {
+		t.Fatalf("settlement=%+v", settlement)
 	}
 }
 

@@ -195,6 +195,8 @@ type adminAccessKeyInput struct {
 	RoutePolicyID       string            `json:"route_policy_id"`
 	AllowedProviders    string            `json:"allowed_providers"`
 	AllowedModels       string            `json:"allowed_models"`
+	InitialCredit       string            `json:"initial_credit"`
+	Currency            string            `json:"currency"`
 	ProviderKeyBindings map[string]string `json:"provider_key_bindings"`
 	ExpiresAt           string            `json:"expires_at"`
 	Metadata            map[string]string `json:"metadata"`
@@ -1459,6 +1461,8 @@ func (s *Server) handleAdminAccessKeys(w http.ResponseWriter, r *http.Request) {
 			RoutePolicyID:       strings.TrimSpace(in.RoutePolicyID),
 			AllowedProviders:    strings.TrimSpace(in.AllowedProviders),
 			AllowedModels:       strings.TrimSpace(in.AllowedModels),
+			InitialCredit:       strings.TrimSpace(in.InitialCredit),
+			Currency:            strings.TrimSpace(in.Currency),
 			ProviderKeyBindings: in.ProviderKeyBindings,
 			ExpiresAt:           exp,
 			Metadata:            in.Metadata,
@@ -1487,15 +1491,15 @@ func (s *Server) handleAdminAccessKeysBatch(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var in struct {
-		Action           string   `json:"action"`
-		Names            []string `json:"names"`
-		Providers        string   `json:"allowed_providers"`
-		Prefix           string   `json:"prefix"`
-		Count            int      `json:"count"`
-		Amount           string   `json:"amount"`
-		Currency         string   `json:"currency"`
-		IdempotencyPrefix string  `json:"idempotency_prefix"`
-		SubjectType      string   `json:"subject_type"`
+		Action            string   `json:"action"`
+		Names             []string `json:"names"`
+		Providers         string   `json:"allowed_providers"`
+		Prefix            string   `json:"prefix"`
+		Count             int      `json:"count"`
+		Amount            string   `json:"amount"`
+		Currency          string   `json:"currency"`
+		IdempotencyPrefix string   `json:"idempotency_prefix"`
+		SubjectType       string   `json:"subject_type"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in); err != nil {
 		writeJSONAny(w, http.StatusBadRequest, adminAccessKeyResponse{Error: "invalid JSON"})
@@ -1530,21 +1534,23 @@ func (s *Server) handleAdminAccessKeysBatch(w http.ResponseWriter, r *http.Reque
 
 func safeAccessKey(v controlplane.AccessKeyRecord) map[string]any {
 	return map[string]any{
-		"name":                  v.Name,
-		"status":                v.Status,
-		"subject_type":          v.SubjectType,
-		"subject_id":            v.SubjectID,
-		"account_id":            v.AccountID,
-		"provisioning":          v.Provisioning,
-		"provisioning_error":    v.ProvisioningError,
-		"route_policy_id":       v.RoutePolicyID,
-		"allowed_providers":     v.AllowedProviders,
-		"allowed_models":        v.AllowedModels,
-		"provider_key_bindings": v.ProviderKeyBindings,
-		"created_at":            v.CreatedAt,
-		"expires_at":            v.ExpiresAt,
-		"version":               v.Version,
-		"metadata":              v.Metadata,
+		"name":                   v.Name,
+		"status":                 v.Status,
+		"subject_type":           v.SubjectType,
+		"subject_id":             v.SubjectID,
+		"account_id":             v.AccountID,
+		"provisioning":           v.Provisioning,
+		"provisioning_error":     v.ProvisioningError,
+		"billing_initial_credit": v.BillingInitialCredit,
+		"billing_currency":       v.BillingCurrency,
+		"route_policy_id":        v.RoutePolicyID,
+		"allowed_providers":      v.AllowedProviders,
+		"allowed_models":         v.AllowedModels,
+		"provider_key_bindings":  v.ProviderKeyBindings,
+		"created_at":             v.CreatedAt,
+		"expires_at":             v.ExpiresAt,
+		"version":                v.Version,
+		"metadata":               v.Metadata,
 	}
 }
 
@@ -1653,6 +1659,28 @@ func (s *Server) handleAdminAccessKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "balance": balance, "limits": limits})
+		return
+	}
+	if len(parts) == 2 && parts[1] == "settlement" {
+		if r.Method != http.MethodGet {
+			writeMethodNotAllowed(w, http.MethodGet)
+			return
+		}
+		rec, err := s.service.GetAccessKey(r.Context(), name)
+		if err != nil {
+			writeJSONAny(w, http.StatusServiceUnavailable, adminAccessKeyResponse{Error: "access key lookup unavailable"})
+			return
+		}
+		if rec == nil {
+			writeJSONAny(w, http.StatusNotFound, adminAccessKeyResponse{Error: "access key not found"})
+			return
+		}
+		settlement, err := s.service.ReadAccessKeySettlement(r.Context(), *rec)
+		if err != nil {
+			writeJSONAny(w, http.StatusServiceUnavailable, adminAccessKeyResponse{Error: "settlement unavailable"})
+			return
+		}
+		writeJSONAny(w, http.StatusOK, map[string]any{"ok": true, "settlement": settlement})
 		return
 	}
 	if len(parts) == 2 && parts[1] == "provision" {
