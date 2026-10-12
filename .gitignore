@@ -6,6 +6,10 @@ keys.yaml.*
 price.yaml
 price.yaml.*
 price_overrides.yaml
+config.json
+whitelist_access_keys.json
+profiles_rows-3.csv
+to-update.json
 .env
 .env.oauth
 run/
