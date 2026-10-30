@@ -286,10 +286,10 @@ func applyDefaults(cfg *Config) {
 		cfg.Server.Listen = ":3300"
 	}
 	if cfg.Server.ReadTimeoutMs <= 0 {
-		cfg.Server.ReadTimeoutMs = 60000
+		cfg.Server.ReadTimeoutMs = 600000
 	}
 	if cfg.Server.WriteTimeoutMs <= 0 {
-		cfg.Server.WriteTimeoutMs = 60000
+		cfg.Server.WriteTimeoutMs = 600000
 	}
 	if strings.TrimSpace(cfg.Server.PidFile) == "" {
 		cfg.Server.PidFile = "/var/run/onr.pid"
